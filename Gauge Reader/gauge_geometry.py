@@ -86,7 +86,8 @@ def pressure_from_angle(
         calibration: Definition of the gauge range and valid scale sweep.
 
     Returns:
-        Pressure in bar when the angle lies on the calibrated scale, otherwise None.
+        Pressure in bar, using the nearest endpoint for a small overshoot.
+        Angles farther outside the calibrated scale return None.
 
     """
 
@@ -95,8 +96,27 @@ def pressure_from_angle(
         angle_degrees - calibration.zero_angle_degrees
     )
 
-    # If the needle is past the calibrated sweep, return no pressure reading.
+    # Allow a small angle error beyond either end without shifting the scale.
     if travel_degrees > calibration.clockwise_sweep_degrees:
+        below_zero_degrees = 360.0 - travel_degrees
+        above_full_scale_degrees = travel_degrees - calibration.clockwise_sweep_degrees
+        tolerance = calibration.endpoint_tolerance_degrees
+
+        # A pointer just below zero reads the minimum pressure, never a negative value.
+        if (
+            below_zero_degrees <= tolerance
+            and below_zero_degrees < above_full_scale_degrees
+        ):
+            return calibration.minimum_bar
+
+        # A pointer just beyond full scale reads the maximum pressure.
+        if (
+            above_full_scale_degrees <= tolerance
+            and above_full_scale_degrees < below_zero_degrees
+        ):
+            return calibration.maximum_bar
+
+        # Keep withholding pressure when the angle is too far outside or ambiguous.
         return None
 
     # Divide the angle travelled by the full sweep to get the fraction of the scale.

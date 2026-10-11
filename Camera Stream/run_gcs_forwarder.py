@@ -11,13 +11,14 @@ from contextlib import ExitStack
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import signal
 import sys
 from time import monotonic
 from types import SimpleNamespace
 from uuid import uuid4
 
 from gcs_output import gcs_log_payloads
-from run_mqtt_subscriber import receive
+from run_mqtt_subscriber import receive, subscription_runtime
 from stream_mqtt import MqttResultPublisher, positive_timeout, validate_local_endpoint
 
 
@@ -106,7 +107,7 @@ def build_parser():
         "--timeout-s",
         type=float,
         default=600.0,
-        help="Total subscriber runtime (default: 600 s).",
+        help="Runtime in seconds; 0 keeps forwarding until Ctrl+C (default: 600).",
     )
     parser.add_argument(
         "--max-frames",
@@ -133,7 +134,7 @@ def main(argv=None, *, printer=print):
 
     try:
         sampler = LogSampler(interval_s=args.interval_s)
-        positive_timeout(args.timeout_s)
+        args.timeout_s = subscription_runtime(args.timeout_s)
         validate_local_endpoint("127.0.0.1", args.local_port, args.local_topic)
 
         if (
@@ -277,4 +278,8 @@ def main(argv=None, *, printer=print):
 
 
 if __name__ == "__main__":
+    # Windows sends Ctrl+Break to child groups; run the usual interrupt cleanup.
+    if sys.platform == "win32":
+        signal.signal(signal.SIGBREAK, signal.default_int_handler)
+
     raise SystemExit(main())

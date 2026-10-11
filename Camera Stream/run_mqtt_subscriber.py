@@ -6,6 +6,7 @@ import argparse
 import json
 from pathlib import Path
 from queue import Empty, Full, Queue
+import signal
 import sys
 from threading import Event
 from time import monotonic
@@ -13,10 +14,20 @@ from time import monotonic
 from stream_mqtt import load_mqtt, positive_timeout, validate_local_endpoint
 
 
+def subscription_runtime(value):
+    # Zero keeps receiving until stopped; all other runtimes must be finite and positive.
+    value = float(value)
+
+    if value == 0:
+        return value
+
+    return positive_timeout(value)
+
+
 def _timeout_argument(value):
-    # Convert a valid positive timeout or report it as a command-line argument error.
+    # Report an invalid runtime as a command-line argument error.
     try:
-        return positive_timeout(value)
+        return subscription_runtime(value)
 
     except ValueError as error:
         raise argparse.ArgumentTypeError(str(error)) from error
@@ -35,13 +46,13 @@ def build_parser():
         "--max-messages",
         type=int,
         default=0,
-        help="Stop after this many messages; 0 means run until timeout",
+        help="Stop after this many messages; 0 leaves only the runtime limit",
     )
     parser.add_argument(
         "--timeout-s",
         type=_timeout_argument,
         default=30.0,
-        help="Total finite runtime in seconds (default: 30)",
+        help="Runtime in seconds; 0 keeps receiving until Ctrl+C (default: 30)",
     )
     parser.add_argument(
         "--ready-file",
@@ -79,6 +90,7 @@ def _summary(record):
 def receive(args, *, on_record=None, printer=print):
     # Subscribe locally, process queued JSON records and stop at the requested limit.
     validate_local_endpoint(args.host, args.port, args.topic)
+    timeout_s = subscription_runtime(args.timeout_s)
 
     if args.max_messages < 0:
         raise ValueError("max-messages must be zero or positive")
@@ -93,11 +105,13 @@ def receive(args, *, on_record=None, printer=print):
         protocol=mqtt.MQTTv311,
         reconnect_on_failure=False,
     )
-    client.connect_timeout = min(3.0, args.timeout_s)
+    # Continuous operation must still fail promptly when subscription setup fails.
+    setup_timeout = min(3.0, timeout_s) if timeout_s else 3.0
+    client.connect_timeout = setup_timeout
     output = None
     count = 0
     closing = False
-    deadline = monotonic() + args.timeout_s
+    deadline = monotonic() + timeout_s if timeout_s else None
 
     def fail(message):
         # Save the MQTT error and signal the receive loop to stop.
@@ -158,7 +172,7 @@ def receive(args, *, on_record=None, printer=print):
             raise ConnectionError(f"MQTT network loop could not start: {result}")
 
         # Wait at most three seconds, or the shorter runtime, for subscription setup.
-        if not subscribed.wait(min(3.0, args.timeout_s)):
+        if not subscribed.wait(setup_timeout):
             raise TimeoutError("MQTT connection/subscription acknowledgement timed out")
 
         if failed.is_set():
@@ -176,7 +190,7 @@ def receive(args, *, on_record=None, printer=print):
             flush=True,
         )
 
-        # Receive up to the requested count, or until timeout when the count is zero.
+        # Receive until a count or time limit is reached, or until Ctrl+C.
         while (
             not args.max_messages
             or count < args.max_messages
@@ -184,19 +198,24 @@ def receive(args, *, on_record=None, printer=print):
             if failed.is_set():
                 raise ConnectionError(errors[0])
 
-            remaining = deadline - monotonic()
+            wait_s = 0.1
 
-            # At the deadline, fail an unmet message count or finish a timed-only run.
-            if remaining <= 0:
-                if args.max_messages:
-                    raise TimeoutError(
-                        f"Received {count}/{args.max_messages} messages before timeout"
-                    )
+            if deadline is not None:
+                remaining = deadline - monotonic()
 
-                break
+                # At the deadline, fail an unmet count or finish a timed-only run.
+                if remaining <= 0:
+                    if args.max_messages:
+                        raise TimeoutError(
+                            f"Received {count}/{args.max_messages} messages before timeout"
+                        )
+
+                    break
+
+                wait_s = min(wait_s, remaining)
 
             try:
-                payload = messages.get(timeout=min(0.1, remaining))
+                payload = messages.get(timeout=wait_s)
 
             except Empty:
                 # No message arrived in this wait; recheck the deadline and connection.
@@ -259,4 +278,8 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    # Windows sends Ctrl+Break to child groups; run the usual interrupt cleanup.
+    if sys.platform == "win32":
+        signal.signal(signal.SIGBREAK, signal.default_int_handler)
+
     raise SystemExit(main())

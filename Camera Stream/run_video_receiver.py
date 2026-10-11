@@ -309,10 +309,18 @@ def main(argv=None):
         raise
 
     finally:
-        # Ignore further Ctrl+C signals while closing resources and saving final status.
-        previous_sigint_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        # Ignore further interrupts while closing resources and saving final status.
+        interrupt_signals = [signal.SIGINT]
+
+        if hasattr(signal, "SIGBREAK"):
+            interrupt_signals.append(signal.SIGBREAK)
+
+        previous_handlers = {}
 
         try:
+            for sig in interrupt_signals:
+                previous_handlers[sig] = signal.signal(sig, signal.SIG_IGN)
+
             active_error = sys.exception()
             cleanup_errors = []
             actions = [store.close]
@@ -385,11 +393,15 @@ def main(argv=None):
                 raise cleanup_errors[0]
 
         finally:
-            # Restore the original Ctrl+C handler after finalisation is complete.
-            signal.signal(signal.SIGINT, previous_sigint_handler)
+            # Restore all interrupt handlers after finalisation is complete.
+            for sig, handler in previous_handlers.items():
+                signal.signal(sig, handler)
 
     return exit_code
 
 
 if __name__ == "__main__":
+    if hasattr(signal, "SIGBREAK"):
+        signal.signal(signal.SIGBREAK, signal.default_int_handler)
+
     raise SystemExit(main())

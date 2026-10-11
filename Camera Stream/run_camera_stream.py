@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from math import isfinite
 from pathlib import Path
 import platform
+import signal
 import sys
 from uuid import uuid4
 
@@ -27,6 +28,16 @@ def positive_int(value):
 
     if number <= 0:
         raise argparse.ArgumentTypeError("must be positive")
+
+    return number
+
+
+def frame_limit(value):
+    # Zero runs until the operator stops it; positive values bound a test run.
+    number = int(value)
+
+    if number < 0:
+        raise argparse.ArgumentTypeError("must be zero or positive")
 
     return number
 
@@ -126,11 +137,14 @@ def build_parser():
         type=positive_finite,
         help="Optional per-branch elapsed budget; checked after return, not cancellation.",
     )
-    parser.add_argument("--max-frames", type=positive_int)
+    parser.add_argument(
+        "--max-frames", type=frame_limit,
+        help="Processed frame limit; 0 runs until Ctrl+C.",
+    )
     parser.add_argument(
         "--headless",
         action="store_true",
-        help="No preview; requires --max-frames.",
+        help="No preview; requires --max-frames (use 0 to run until Ctrl+C).",
     )
     parser.add_argument(
         "--source-timeout-s",
@@ -413,11 +427,15 @@ def main(
                     "Explicit OAK 1080p resize/centre-crop geometry selected; validate physically."
                 )
 
-            printer(
-                "Bounded headless run."
-                if args.headless
-                else "Press q in the video window to stop."
-            )
+            if args.headless:
+                printer(
+                    "Bounded headless run."
+                    if args.max_frames
+                    else "Headless stream; press Ctrl+C to stop."
+                )
+
+            else:
+                printer("Press q in the video window to stop.")
             # Choose a preview window or a display that continues without a window.
             display = (
                 HeadlessDisplay()
@@ -462,7 +480,7 @@ def main(
                 requested_fps=profile.fps,
                 processors=processors,
                 on_frame=session.write,
-                max_frames=args.max_frames,
+                max_frames=args.max_frames or None,
                 max_processing_ms=args.max_processing_ms,
                 on_output=distribute,
                 on_capture=retain_capture if capture is not None else None,
@@ -540,4 +558,8 @@ def main(
 
 
 if __name__ == "__main__":
+    # Windows sends Ctrl+Break to child groups; run the usual interrupt cleanup.
+    if sys.platform == "win32":
+        signal.signal(signal.SIGBREAK, signal.default_int_handler)
+
     raise SystemExit(main())

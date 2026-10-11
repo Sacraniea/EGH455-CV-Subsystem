@@ -40,28 +40,45 @@ async def serve(port, ready_file):
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
 
-    # Turn Ctrl+C and termination signals into the event that ends the wait below.
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stopped.set)
+    # Wake the event loop for Ctrl+C, termination and Windows Ctrl+Break.
+    # signal.signal works on Windows, where loop.add_signal_handler is unavailable.
+    def request_stop(signum, frame):
+        loop.call_soon_threadsafe(stopped.set)
 
-    broker = Broker(broker_config(port))
-    await broker.start()
+    stop_signals = [signal.SIGINT, signal.SIGTERM]
+
+    if hasattr(signal, "SIGBREAK"):
+        stop_signals.append(signal.SIGBREAK)
+
+    previous_handlers = {}
 
     try:
-        if ready_file:
-            # Write the readiness file after the broker has opened its listening port.
-            with ready_file.open("x", encoding="utf-8") as file:
-                json.dump({"broker": "amqtt", "host": "127.0.0.1", "port": port}, file)
+        for sig in stop_signals:
+            previous_handlers[sig] = signal.signal(sig, request_stop)
 
-        print(
-            f"Local MQTT broker listening on 127.0.0.1:{port}; Ctrl+C stops it.",
-            flush=True,
-        )
-        await stopped.wait()
+        broker = Broker(broker_config(port))
+        await broker.start()
+
+        try:
+            if ready_file:
+                # Write readiness only after the broker opens its listening port.
+                with ready_file.open("x", encoding="utf-8") as file:
+                    json.dump({"broker": "amqtt", "host": "127.0.0.1", "port": port}, file)
+
+            print(
+                f"Local MQTT broker listening on 127.0.0.1:{port}; Ctrl+C stops it.",
+                flush=True,
+            )
+            await stopped.wait()
+
+        finally:
+            # Shut down the broker and release its listening port when the wait ends.
+            await broker.shutdown()
 
     finally:
-        # Shut down the broker and release its listening port when the wait ends.
-        await broker.shutdown()
+        # Do not leave handlers pointing at a loop that is about to close.
+        for sig, handler in previous_handlers.items():
+            signal.signal(sig, handler)
 
 
 def main(argv=None):

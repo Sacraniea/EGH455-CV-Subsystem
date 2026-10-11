@@ -165,12 +165,47 @@ class StreamCommandTests(unittest.TestCase):
 
         self.assertTrue(source.closed and display.closed)
 
+    def test_headless_continuous_run_records_frames_until_interrupted(self):
+        source = PreparedSource()
+        read_packet = source.read
+
+        def read_then_interrupt():
+            # Supply two packets before simulating the operator pressing Ctrl+C.
+            try:
+                return read_packet()
+
+            except StopIteration:
+                raise KeyboardInterrupt()
+
+        source.read = read_then_interrupt
+
+        with TemporaryDirectory() as temporary:
+            output = Path(temporary) / "run"
+            code = main(
+                ["--headless", "--max-frames", "0", "--output-dir", str(output)],
+                source_factory=lambda profile: source,
+                display_factory=lambda **kwargs: self.fail("Headless opened a window"),
+                printer=lambda message: None,
+            )
+            self.assertEqual(code, 130)
+            manifest = json.loads((output / "run.json").read_text())
+            self.assertEqual(manifest["status"], "interrupted")
+            self.assertEqual(manifest["stop_reason"], "keyboard_interrupt")
+            self.assertEqual(manifest["frames_recorded"], 2)
+            records = [
+                json.loads(line)
+                for line in (output / "frames.jsonl").read_text().splitlines()
+            ]
+            self.assertEqual([record["sequence_number"] for record in records], [1, 2])
+
+        self.assertTrue(source.closed)
+
     def test_invalid_options_do_not_open_camera(self):
         # Try invalid option combinations and fail the test if any one opens a camera.
         for options in (
             ["--headless"],
             ["--permitted-ids", "7"],
-            ["--max-frames", "0"],
+            ["--max-frames", "-1"],
             ["--max-processing-ms", "nan"],
             ["--calibration-mode", "oak-1080"],
         ):

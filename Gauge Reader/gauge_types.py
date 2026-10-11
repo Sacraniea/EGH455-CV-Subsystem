@@ -26,6 +26,8 @@ class GaugeCalibration:
     zero_angle_degrees: float = 225.0
     full_scale_angle_degrees: float = 135.0
     clockwise_sweep_degrees: float = 270.0
+    # Allow a small overshoot beyond either scale end without losing the reading.
+    endpoint_tolerance_degrees: float = 10.0
 
 
 @dataclass(frozen=True)

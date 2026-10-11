@@ -1,4 +1,4 @@
-"""Run a finite video + MQTT demo, with an optional LAN HTTP viewing address."""
+"""Run the CV subsystem and optional GCS forwarders from one command."""
 
 import argparse
 from datetime import datetime, timezone
@@ -119,14 +119,20 @@ def complete_trial(root, children):
     """Stop writers before checking their complete files and final exit codes."""
     children.close()
     delivery = verify_delivery(root)
-    # Accept normal exits and Ctrl+C exits from the receiver and subscriber.
-    # Treat every other nonzero child exit as a failed trial.
-    failed = {
-        name: process.returncode
-        for name, process, _ in children.running
-        if process.returncode
-        not in ((0, 130) if name in ("video-receiver", "mqtt-subscriber") else (0,))
+    # These consumers run until the launcher asks them to stop.
+    interrupted_services = {
+        "video-receiver",
+        "mqtt-subscriber",
+        "gcs-log-forwarder",
+        "gcs-image-forwarder",
     }
+    failed = {}
+
+    for name, process, _ in children.running:
+        accepted_codes = (0, 130) if name in interrupted_services else (0,)
+
+        if process.returncode not in accepted_codes:
+            failed[name] = process.returncode
 
     if failed:
         # Mark delivery unverified if any service failed during shutdown.
@@ -157,6 +163,13 @@ class Children:
         # Start the sibling Python script and send its output and errors to one log.
         log = (self.root / "logs" / f"{name}.log").open("x", encoding="utf-8")
 
+        # Give each child its own interrupt group on the current operating system.
+        process_options = (
+            {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+            if sys.platform == "win32"
+            else {"start_new_session": True}
+        )
+
         try:
             process = subprocess.Popen(
                 [
@@ -168,7 +181,7 @@ class Children:
                 ],
                 stdout=log,
                 stderr=subprocess.STDOUT,
-                start_new_session=True,
+                **process_options,
             )
 
         except BaseException:
@@ -184,26 +197,40 @@ class Children:
         deadline = monotonic() + seconds
 
         while monotonic() < deadline:
-            if process.poll() is not None:
+            exit_code = process.poll()
+
+            # A short finished sender can still leave a complete capture directory.
+            if (
+                marker.exists()
+                and (
+                    exit_code is None
+                    or (marker.is_dir() and exit_code == 0)
+                )
+            ):
+                return
+
+            if exit_code is not None:
                 raise RuntimeError(
                     f'Child exited before readiness; inspect {self.root / "logs"}'
                 )
-
-            if marker.exists():
-                return
 
             sleep(0.05)
 
         raise TimeoutError(f'Child startup timed out; inspect {self.root / "logs"}')
 
     def close(self):
+        stop_signal = (
+            signal.CTRL_BREAK_EVENT
+            if sys.platform == "win32"
+            else signal.SIGINT
+        )
         # Ask the sender and consumers to stop first, leaving the broker running.
         for name, process, _ in reversed(self.running):
             if (
                 name != "broker"
                 and process.poll() is None
             ):
-                process.send_signal(signal.SIGINT)
+                process.send_signal(stop_signal)
 
         # Wait for each child to finish, then stop the broker after its consumers.
         for name, process, log in reversed(self.running):
@@ -212,7 +239,7 @@ class Children:
                     name == "broker"
                     and process.poll() is None
                 ):
-                    process.send_signal(signal.SIGINT)
+                    process.send_signal(stop_signal)
 
                 try:
                     process.wait(timeout=5.0)
@@ -255,7 +282,7 @@ def build_parser():
         "--max-frames",
         type=int,
         default=900,
-        help="Finite trial, default 900 (about 30 seconds).",
+        help="Processed frame limit; 0 runs until Ctrl+C (default: 900).",
     )
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--mqtt-port", type=int, default=18883)
@@ -294,6 +321,34 @@ def build_parser():
         choices=("exact", "oak-1080"),
         default="exact",
     )
+
+    # An address on its own sends both logs and photos to that GCS broker.
+    parser.add_argument(
+        "gcs_address",
+        nargs="?",
+        metavar="GCS_ADDRESS",
+        help="Publish logs and photos to this broker unless --gcs overrides the mode.",
+    )
+
+    # Auto previews locally until a broker address is supplied.
+    parser.add_argument(
+        "--gcs",
+        choices=("auto", "off", "preview", "publish"),
+        help="GCS mode: auto publishes with an address, otherwise previews; omitted means off unless GCS_ADDRESS is supplied.",
+    )
+
+    # Use this destination when publishing logs and detection images.
+    parser.add_argument(
+        "--gcs-broker",
+        help="GCS broker hostname or IP address.",
+    )
+    parser.add_argument(
+        "--gcs-port",
+        type=int,
+        default=1883,
+        help="GCS broker port; defaults to 1883.",
+    )
+
     return parser
 
 
@@ -369,13 +424,54 @@ def _sender_arguments(args, root):
 
 
 def main(argv=None):
-    # Start the local services, stream a fixed number of frames and verify delivery.
+    # Start the services together; verify delivery when a finite trial finishes.
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    # Remove accidental spaces around the broker address.
+    if args.gcs_broker:
+        args.gcs_broker = args.gcs_broker.strip()
+
+    # Accept the short command while keeping the named broker option available.
+    if args.gcs_address is not None:
+        address = args.gcs_address.strip()
+
+        if not address:
+            parser.error("GCS_ADDRESS must not be empty")
+
+        if (
+            args.gcs_broker
+            and args.gcs_broker != address
+        ):
+            parser.error("GCS_ADDRESS and --gcs-broker must name the same broker")
+
+        args.gcs_broker = address
+
+    # Keep an explicit preview or off choice, even when an address was supplied.
+    if args.gcs is None:
+        args.gcs = "publish" if args.gcs_address is not None else "off"
+
+    elif args.gcs == "auto":
+        args.gcs = "publish" if args.gcs_broker else "preview"
+
+    # Publishing needs a destination; local previews do not.
+    if (
+        args.gcs == "publish"
+        and not args.gcs_broker
+    ):
+        parser.error("--gcs publish requires --gcs-broker")
+
+    if args.gcs != "off":
+        # Check the destination port before starting any services.
+        if not 1 <= args.gcs_port <= 65535:
+            parser.error("--gcs-port must be between 1 and 65535")
+
+        # Both GCS modes need saved photos for the image forwarder.
+        args.capture_detections = True
+
     # Reject invalid frame limits, storage limits and camera-only options.
-    if args.max_frames <= 0:
-        parser.error("--max-frames must be positive")
+    if args.max_frames < 0:
+        parser.error("--max-frames must be zero or positive")
 
     if (
         args.capture_max_pending <= 0
@@ -441,6 +537,9 @@ def main(argv=None):
         status="failed",
         source_kind="camera" if args.camera else "synthetic",
         preview_url=url,
+        gcs_mode=args.gcs,
+        gcs_broker=args.gcs_broker if args.gcs == "publish" else None,
+        gcs_port=args.gcs_port if args.gcs == "publish" else None,
     )
     exit_code = 1
 
@@ -475,8 +574,13 @@ def main(argv=None):
             receiver_args,
         )
         children.ready(receiver, root / "receiver.ready.json")
-        # Set a time limit from the frame count, allowing at least 45 seconds.
-        max_runtime = max(45.0, args.max_frames / 30.0 * 6.0 + 30.0)
+        # Finite tests allow time for slower processors; the main run has no deadline.
+        max_runtime = (
+            max(60.0, args.max_frames / 30.0 * 12.0 + 60.0)
+            if args.max_frames
+            else None
+        )
+        subscriber_runtime = max_runtime + 15.0 if max_runtime is not None else 0
         # Start the MQTT subscriber and wait until it is ready to receive results.
         subscriber = children.start(
             "mqtt-subscriber",
@@ -485,7 +589,7 @@ def main(argv=None):
                 "--port",
                 args.mqtt_port,
                 "--timeout-s",
-                max_runtime + 15.0,
+                subscriber_runtime,
                 "--output",
                 root / "mqtt.jsonl",
                 "--ready-file",
@@ -493,15 +597,71 @@ def main(argv=None):
             ],
         )
         children.ready(subscriber, root / "subscriber.ready")
+
+        # Reuse the existing forwarders with one destination and this run's files.
+        gcs_processes = {}
+        gcs_destination = []
+
+        if args.gcs == "publish":
+            gcs_destination = [
+                "--publish",
+                "--broker", args.gcs_broker,
+                "--port", args.gcs_port,
+            ]
+
+        if args.gcs != "off":
+            # Listen before the sender can produce its first detection result.
+            log_forwarder = children.start(
+                "gcs-log-forwarder",
+                "run_gcs_forwarder.py",
+                [
+                    "--local-port", args.mqtt_port,
+                    "--interval-s", 5,
+                    "--timeout-s", subscriber_runtime,
+                    "--output", root / "gcs-logs.jsonl",
+                    "--ready-file", root / "gcs-logs.ready",
+                    *gcs_destination,
+                ],
+            )
+            gcs_processes["gcs-log-forwarder"] = log_forwarder
+            children.ready(log_forwarder, root / "gcs-logs.ready")
+
         sender_args = _sender_arguments(args, root)
 
         # Start capture after the receiving services are ready and print their paths.
         sender = children.start("sender", "run_camera_stream.py", sender_args)
+        deadline = monotonic() + max_runtime if max_runtime is not None else None
+
+        if args.gcs != "off":
+            capture_dir = root / "sender" / "detections"
+
+            # The sender owns this directory; wait for it rather than creating it here.
+            children.ready(sender, capture_dir, seconds=60)
+            image_forwarder = children.start(
+                "gcs-image-forwarder",
+                "run_gcs_image_forwarder.py",
+                [
+                    "--capture-dir", capture_dir,
+                    "--interval-s", 3,
+                    "--max-mbps", 1,
+                    "--publish-timeout-s", 60,
+                    "--timeout-s", 0,
+                    *gcs_destination,
+                ],
+            )
+            gcs_processes["gcs-image-forwarder"] = image_forwarder
+            print(
+                f"GCS mode: {args.gcs}\n"
+                f'GCS log records: {root / "gcs-logs.jsonl"}\n'
+                f'Forwarder output: {root / "logs"}',
+                flush=True,
+            )
+
         print(
             f'{"CAMERA" if args.camera else "SYNTHETIC DEMO — no camera"}\n'
             f"Profile: {args.profile}\n"
             f"Video: {url}\nMQTT: 127.0.0.1:{args.mqtt_port}, topic taip/local/results\n"
-            f"Evidence: {root}\nCtrl+C stops all four child processes.",
+            f"Evidence: {root}\nCtrl+C stops all processes started by this run.",
             flush=True,
         )
 
@@ -514,11 +674,18 @@ def main(argv=None):
         if args.open_browser:
             webbrowser.open(url)
 
-        deadline = monotonic() + max_runtime
         next_report = 0.0
 
         # Watch child exits and the time limit while the sender is still running.
         while sender.poll() is None:
+            # Report a stopped forwarder rather than silently losing GCS output.
+            for name, process in gcs_processes.items():
+                if process.poll() is not None:
+                    raise RuntimeError(
+                        f"{name} stopped during capture; "
+                        f"inspect {root / 'logs' / (name + '.log')}"
+                    )
+
             if (
                 broker.poll() is not None
                 or subscriber.poll() is not None
@@ -532,8 +699,8 @@ def main(argv=None):
                     "Video receiver failed; inspect logs/video-receiver.log"
                 )
 
-            if monotonic() > deadline:
-                raise TimeoutError("Sender exceeded the finite demo time limit")
+            if deadline is not None and monotonic() > deadline:
+                raise TimeoutError("Sender exceeded the finite trial time limit")
 
             if monotonic() >= next_report:
                 # Read and print the receiver's latest frame count every two seconds.
@@ -615,6 +782,14 @@ def main(argv=None):
         summary["child_exit_codes"] = {
             name: p.returncode for name, p, _ in children.running
         }
+        if args.gcs != "off":
+            # Local delivery checks do not establish whether the GCS stored a message.
+            summary["gcs_delivery_note"] = (
+                "Inspect gcs-logs.jsonl and sender/detections receipts. "
+                "Shutdown does not drain pending photos; saved files are retained. "
+                "A broker acknowledgement does not confirm GCS database ingestion."
+            )
+
         (root / "summary.json").write_text(
             json.dumps(summary, indent=2, allow_nan=False) + "\n"
         )
@@ -631,4 +806,8 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    # Windows sends Ctrl+Break to child groups; run the usual interrupt cleanup.
+    if sys.platform == "win32":
+        signal.signal(signal.SIGBREAK, signal.default_int_handler)
+
     raise SystemExit(main())

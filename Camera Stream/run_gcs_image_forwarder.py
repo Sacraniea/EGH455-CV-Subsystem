@@ -14,6 +14,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import signal
 import sys
 from tempfile import TemporaryDirectory
 from time import monotonic, sleep
@@ -754,4 +755,8 @@ def main(argv=None, *, printer=print):
 
 
 if __name__ == "__main__":
+    # Windows sends Ctrl+Break to child groups; run the usual interrupt cleanup.
+    if sys.platform == "win32":
+        signal.signal(signal.SIGBREAK, signal.default_int_handler)
+
     raise SystemExit(main())

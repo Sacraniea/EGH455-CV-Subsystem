@@ -79,6 +79,51 @@ class GaugeGeometryTests(unittest.TestCase):
             pressure_from_angle(180.0, self.calibration),
         )
 
+    def test_angles_just_outside_scale_use_the_endpoint_pressure(self):
+        # Include the measured near-zero angles from the camera trial.
+        for angle, expected in (
+            (222.7, 0.0),
+            (217.1, 0.0),
+            (215.0, 0.0),
+            (140.0, 10.0),
+            (145.0, 10.0),
+        ):
+            with self.subTest(angle=angle):
+                self.assertEqual(pressure_from_angle(angle, self.calibration), expected)
+
+    def test_angles_beyond_endpoint_tolerance_remain_unavailable(self):
+        for angle in (214.99, 145.01, 180.0):
+            with self.subTest(angle=angle):
+                self.assertIsNone(pressure_from_angle(angle, self.calibration))
+
+    def test_angles_inside_scale_keep_their_calculated_pressure(self):
+        # Readings inside the scale must not be rounded down or up to its ends.
+        self.assertAlmostEqual(pressure_from_angle(234.0, self.calibration), 1 / 3)
+        self.assertAlmostEqual(pressure_from_angle(126.0, self.calibration), 29 / 3)
+
+    def test_endpoint_tolerance_follows_a_rotated_custom_scale(self):
+        calibration = GaugeCalibration(
+            minimum_bar=2.0,
+            maximum_bar=14.0,
+            zero_angle_degrees=5.0,
+            full_scale_angle_degrees=275.0,
+        )
+
+        # The zero mark crosses 360 degrees; the full-scale mark is also rotated.
+        self.assertEqual(pressure_from_angle(358.0, calibration), 2.0)
+        self.assertEqual(pressure_from_angle(282.0, calibration), 14.0)
+        self.assertIsNone(pressure_from_angle(354.0, calibration))
+        self.assertIsNone(pressure_from_angle(286.0, calibration))
+
+    def test_endpoint_tolerance_can_be_tightened_or_disabled(self):
+        tighter = GaugeCalibration(endpoint_tolerance_degrees=3.0)
+        strict = GaugeCalibration(endpoint_tolerance_degrees=0.0)
+
+        self.assertEqual(pressure_from_angle(222.0, tighter), 0.0)
+        self.assertIsNone(pressure_from_angle(221.9, tighter))
+        self.assertIsNone(pressure_from_angle(224.9, strict))
+        self.assertEqual(pressure_from_angle(225.0, strict), 0.0)
+
     def test_point_round_trip_preserves_angles(self):
         """Generating a point and measuring it again should preserve direction."""
 

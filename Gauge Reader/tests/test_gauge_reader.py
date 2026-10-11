@@ -101,6 +101,23 @@ class GaugeReaderTests(unittest.TestCase):
         self.assertTrue(result.valid, result.failure_reason)
         self.assertAlmostEqual(result.value_bar, 8.0, delta=0.08)
 
+    def test_near_endpoint_needles_return_pressure_and_keep_measured_geometry(self):
+        # Exercise the actual needle search before applying the endpoint tolerance.
+        for angle, expected in ((217.1, 0.0), (222.7, 0.0), (140.0, 10.0)):
+            with self.subTest(angle=angle):
+                image = pointer_image(angle)
+                original = image.copy()
+                result = read_gauge(image)
+
+                self.assertTrue(result.valid, result.failure_reason)
+                self.assertEqual(result.value_bar, expected)
+                self.assertIsNone(result.failure_reason)
+                self.assertAlmostEqual(result.angle_degrees, angle, delta=2.0)
+                self.assertIsNotNone(result.centre)
+                self.assertIsNotNone(result.tip)
+                self.assertEqual(result.to_dict()["value_bar"], expected)
+                np.testing.assert_array_equal(image, original)
+
     def test_outside_scale_retains_pivot_and_direction_but_withholds_pressure(self):
         result = read_gauge(
             pointer_image(180.0),
