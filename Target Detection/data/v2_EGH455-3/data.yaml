@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 3
+names: ['closedValve', 'gauge', 'openValve']
+
+roboflow:
+  workspace: bio-aidan-gmail-com
+  project: v2_egh455
+  version: 3
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/bio-aidan-gmail-com/v2_egh455/dataset/3

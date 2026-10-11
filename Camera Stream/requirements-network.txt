@@ -1,0 +1,12 @@
+# Local network demo. Existing camera-only installations need only requirements.txt.
+-r requirements.txt
+vidgear==0.3.3
+paho-mqtt==2.1.0
+pyzmq==27.2.0
+msgpack==1.2.3
+msgpack-numpy==0.4.8
+simplejpeg==1.9.0
+# VidGear 0.3.3 still imports pkg_resources.
+setuptools==80.9.0
+# Local test broker; the team's proposed deployment broker remains Mosquitto.
+amqtt==0.11.3

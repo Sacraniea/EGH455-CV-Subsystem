@@ -1,0 +1,26 @@
+[workspace]
+authors = ["Sacraniea <120763165+Sacraniea@users.noreply.github.com>", "Yidann <bio.aidan@gmail.com>"]
+channels = ["conda-forge"]
+name = "Computer Vision Subsystem"
+platforms = ["linux-64", "win-64", "osx-arm64", "linux-aarch64"]
+version = "0.1.0"
+
+[tasks]
+run-cv-sys-synthetic-test = { cmd = "python -B run_local_demo.py --profile 720p30 --max-frames 300 --open-browser", cwd = "Camera Stream" }
+
+[dependencies]
+python = "3.12.*"
+
+[pypi-dependencies]
+depthai = "==2.32.0.0"
+numpy = "==2.5.2"
+opencv-python = "==4.14.0.94"
+vidgear = "==0.3.3"
+paho-mqtt = "==2.1.0"
+pyzmq = "==27.2.0"
+msgpack = "==1.2.3"
+msgpack-numpy = "==0.4.8"
+simplejpeg = "==1.9.0"
+setuptools = "==80.9.0"
+amqtt = "==0.11.3"
+pyyaml = "==6.0.2"
