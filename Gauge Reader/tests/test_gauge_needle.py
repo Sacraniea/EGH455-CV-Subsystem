@@ -9,7 +9,7 @@ from gauge_needle import detect_needle
 from gauge_types import FailureReason, ReaderConfig
 
 
-def _pointed_needle(angle_degrees, pivot=(256, 256)):
+def _pointed_needle(angle_degrees, pivot=(256, 256), width=12):
     """Draw a long pointed hand, shorter thick tail, and bright enclosed hub."""
     image = np.full((512, 512), 230, dtype=np.uint8)
     centre = np.array(pivot, dtype=float)
@@ -18,9 +18,9 @@ def _pointed_needle(angle_degrees, pivot=(256, 256)):
     perpendicular = np.array([-direction[1], direction[0]])
     outline = np.array(
         [
-            centre + perpendicular * 6,
+            centre + perpendicular * (width / 2),
             centre + direction * 170,
-            centre - perpendicular * 6,
+            centre - perpendicular * (width / 2),
         ],
         dtype=np.int32,
     )
@@ -72,6 +72,17 @@ class GaugeNeedleTests(unittest.TestCase):
         self.assertLess(result.tip[0], 130)
         self.assertGreater(result.tip[1], 325)
         np.testing.assert_allclose(result.pivot, (256, 256), atol=2.0)
+
+    def test_wide_needle_can_use_a_lower_elongation_threshold(self):
+        config = ReaderConfig(
+            minimum_needle_elongation=2.0,
+            minimum_needle_direction_ratio=1.2,
+        )
+
+        result = detect_needle(_pointed_needle(60, width=80), config)
+
+        self.assertTrue(result.valid)
+        self.assertAlmostEqual(result.angle_degrees, 60.0, delta=2.0)
 
     def test_pivot_can_be_displaced_from_crop_centre(self):
         result = detect_needle(

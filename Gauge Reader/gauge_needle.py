@@ -43,6 +43,7 @@ def _select_component(
     mask: np.ndarray,
     centre: np.ndarray,
     side: float,
+    minimum_elongation: float,
 ) -> Tuple[Optional[_NeedleComponent], np.ndarray, int]:
     """Choose the closest sufficiently large, elongated central component."""
     count, labels, bounds, _ = cv2.connectedComponentsWithStats(
@@ -79,7 +80,7 @@ def _select_component(
         covariance = np.cov(points, rowvar=False)
         eigenvalues, eigenvectors = np.linalg.eigh(covariance)
         elongation = float(eigenvalues[-1] / max(eigenvalues[0], 1.0))
-        if elongation < 4.0:
+        if elongation < minimum_elongation:
             continue
 
         candidates.append(
@@ -189,7 +190,12 @@ def detect_needle(gray: np.ndarray, config: ReaderConfig) -> NeedleDetection:
         cv2.MORPH_CLOSE,
         np.ones((3, 3), np.uint8),
     )
-    component, labels, candidate_count = _select_component(mask, centre, side)
+    component, labels, candidate_count = _select_component(
+        mask,
+        centre,
+        side,
+        config.minimum_needle_elongation,
+    )
     metadata["candidate_components"] = candidate_count
     if component is None:
         return rejected(FailureReason.NO_NEEDLE)
@@ -234,7 +240,7 @@ def detect_needle(gray: np.ndarray, config: ReaderConfig) -> NeedleDetection:
     ):
         return rejected(FailureReason.NO_NEEDLE)
 
-    if direction_ratio < 1.35:
+    if direction_ratio < config.minimum_needle_direction_ratio:
         return rejected(FailureReason.AMBIGUOUS_NEEDLE)
 
     # The longer supported side is the reading pointer, not its counterweight.

@@ -36,6 +36,10 @@ class ReaderConfig:
     working_size: int = 512
     minimum_source_side_px: int = 64
     minimum_blur_variance: float = 20.0
+    # Allow wider needle shapes while still rejecting round components.
+    minimum_needle_elongation: float = 2.5
+    # Require the pointer to extend farther from the pivot than its counterweight.
+    minimum_needle_direction_ratio: float = 1.35
 
 
 @dataclass(frozen=True)
