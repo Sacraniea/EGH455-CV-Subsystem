@@ -46,6 +46,17 @@ _STREAM_PROFILES = {
         width=640,
         height=480,
         fps=20.0,
+    "480p15": StreamProfile(
+        name="480p15",
+        width=640,
+        height=480,
+        fps=15.0,
+    ),
+    "480p25": StreamProfile(
+        name="480p25",
+        width=640,
+        height=480,
+        fps=25.0,
     ),
     "720p15": StreamProfile(
         name="720p15",
@@ -66,6 +77,10 @@ _STREAM_PROFILES = {
         fps=30.0,
     ),
 }
+
+
+# List the profile names the command-line runners accept.
+STREAM_PROFILE_NAMES = tuple(_STREAM_PROFILES)
 
 
 def get_stream_profile(profile_name: str) -> StreamProfile:

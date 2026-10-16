@@ -96,7 +96,7 @@ def prepare_targets(model_path = None):
 
     # Import the predictor when target detection is being set up.
     try:
-        from predict import Predictor
+        from predict import initialise_predictor
 
     except ImportError as error:
         raise RuntimeError(
@@ -107,7 +107,7 @@ def prepare_targets(model_path = None):
         ) from error
 
     # Load the model once so every frame can use the same predictor.
-    predictor = Predictor(str(model_path))
+    predictor = initialise_predictor()
 
     # Check that the model's numbered classes match the labels our code expects.
     expected_labels = dict(enumerate(predictor.class_names))
@@ -124,12 +124,18 @@ def prepare_targets(model_path = None):
         predictor = predictor,
     )
 
-    # Calculate a fingerprint so a saved run can identify the exact model file.
-    with model_path.open("rb") as model_file:
-        model_sha256 = file_digest(
-            model_file,
-            "sha256",
-        ).hexdigest()
+    # Save the model fingerprint so later runs can identify the exact model used.
+    # NCNN exports are a folder, so hash every file in it in a fixed order.
+    model_files = (
+        sorted(path for path in model_path.rglob("*") if path.is_file())
+        if model_path.is_dir() else [model_path]
+    )
+    model_hash = sha256()
+    for path in model_files:
+        model_hash.update(str(path.relative_to(model_path.parent)).encode())
+        with path.open("rb") as model_file:
+            model_hash.update(file_digest(model_file, "sha256").digest())
+    model_sha256 = model_hash.hexdigest()
 
     # Return the settings alongside the processor for recording with the run.
     metadata = {

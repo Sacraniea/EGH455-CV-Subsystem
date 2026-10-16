@@ -6,14 +6,14 @@ platforms = ["linux-64", "win-64", { platform = "osx-arm64", macos = "14.0" }, "
 version = "0.1.0"
 
 [tasks]
-# Run the OAK subsystem until Ctrl+C. Add the GCS address to send logs and photos.
-cv-subsystem = { cmd = ["python", "-B", "run_subsystem.py", "--source", "oak", "--profile", "720p30", "--max-frames", "0", "--capture-interval-s", "3", "--calibration", "../ArUco Detection/calibration/oak_cam_a.json", "--calibration-mode", "oak-1080", "--marker-side-length-m", "0.20"], cwd = "Camera Stream", description = "Run the OAK camera and both detection paths; add a GCS broker address to publish." }
+# Run the full subsystem until Ctrl+C. Add the GCS address to publish logs and photos.
+cv-subsystem = { cmd = ["python", "-B", "run_local_demo.py", "--camera", "--targets", "--profile", "480p15", "--max-frames", "0", "--gcs", "auto", "--capture-interval-s", "3", "--calibration", "../ArUco Detection/calibration/oak_cam_a.json", "--calibration-mode", "oak-1080", "--marker-side-length-m", "0.20"], cwd = "Camera Stream", description = "Run until Ctrl+C; add a GCS address to publish logs and photos." }
 
 # Check video and marker processing without connecting a camera.
 cv-sys-synthetic-test = { cmd = ["python", "-B", "run_subsystem.py", "--source", "synthetic", "--no-targets", "--profile", "720p30", "--max-frames", "300", "--open-browser"], cwd = "Camera Stream", description = "Show 300 generated marker frames and save their results locally." }
 
-# Check OAK capture alone, with no detectors, video receiver, browser or photos.
-cv-sys-camera-test = { cmd = ["python", "-B", "run_stream.py", "--source", "oak", "--no-targets", "--no-aruco", "--no-photos", "--no-video", "--profile", "720p30", "--max-frames", "90", "--source-timeout-s", "10"], cwd = "Camera Stream", description = "Read and record 90 OAK frames without starting network services." }
+# Check camera capture on its own.
+cv-sys-camera-test = { cmd = ["python", "-B", "run_camera_stream.py", "--profile", "720p30", "--max-frames", "0", "--source-timeout-s", "10"], cwd = "Camera Stream", description = "Read 90 camera frames without detection or a preview window." }
 
 # Preview gauge and valve detection from the OAK camera.
 cv-sys-target-detection-test = { cmd = ["python", "-B", "run_subsystem.py", "--source", "oak", "--no-aruco", "--no-photos", "--profile", "720p30", "--max-frames", "3000", "--source-timeout-s", "10", "--open-browser"], cwd = "Camera Stream", description = "Show gauge and valve detection for up to 3000 frames; Ctrl+C stops early." }
@@ -44,6 +44,7 @@ pyyaml = "==6.0.2"
 ultralytics = "==8.4.174"
 torch = { version = "==2.13.0", index = "https://download.pytorch.org/whl/cpu" }
 torchvision = { version = "==0.28.0", index = "https://download.pytorch.org/whl/cpu" }
+ncnn = ">=1.0.20260526, <2"
 
 [target.osx.pypi-dependencies]
 torch = { version = "==2.13.0", index = "https://pypi.org/simple" }

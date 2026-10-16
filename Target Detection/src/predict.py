@@ -7,9 +7,17 @@ from annotater import Annotater
 import cv2
 from datetime import datetime, timedelta
 
+from pathlib import Path
+
 
 def initialise_predictor():
-    return Predictor("models/50_epoch_best.pt")
+    MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "v4_ncnn_model"
+    model_path = Path(
+        MODEL_PATH
+    ).expanduser().resolve()
+
+    print(model_path)
+    return Predictor(model_path)
 
 
 class Predictor(Annotater):
@@ -25,10 +33,14 @@ class Predictor(Annotater):
 
     def __init__(self, model_location: str):
         super().__init__()
-        self.model = YOLO(model_location)
+        self.model = YOLO(model_location, task="detect")
         self.latest_prediction = []
         self.time_last_gauge = None
         self.latest_gauge_image = None
+
+    def test_the_class_works(self):
+        print("\n\n\n\n\nYay you imported correctly!\n\n\n\n")
+        return
 
 
     def predict(self, raw_image):

@@ -133,9 +133,12 @@ def prepare_stream_calibration(
             "oak-1080 requires a 3840x2160 or 1920x1080 native calibration"
         )
 
-    if image_size_px not in {(1920, 1080), (1280, 720)}:
+    width, height = image_size_px
+
+    # The OAK video output is a centre crop of the 1080p sensor frame.
+    if not (0 < width <= 1920 and 0 < height <= 1080):
         raise ValueError(
-            "oak-1080 supports only the existing 1080p30 and 720p30 profiles"
+            "oak-1080 supports only profiles that fit inside the 1920x1080 frame"
         )
 
     # First express the calibration in the full 1080p frame's pixel coordinates.
@@ -144,10 +147,10 @@ def prepare_stream_calibration(
     if image_size_px == (1920, 1080):
         return full
 
-    # For 720p, remove 320 px from each side and 180 px from the top and bottom.
+    # Remove the same margin from each side, e.g. 320x180 px for 720p.
     return crop_calibration(
         full,
-        origin_px=(320, 180),
+        origin_px=((1920 - width) // 2, (1080 - height) // 2),
         image_size_px=image_size_px,
     )
 

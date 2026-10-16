@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "run_id": "d4ace4162ed34130835ab957408b7fd7",
+  "status": "failed",
+  "started_at_utc": "2026-10-09T13:41:21.554234+00:00",
+  "metadata": {
+    "profile": {
+      "name": "720p30",
+      "width": 1280,
+      "height": 720,
+      "fps": 30.0
+    },
+    "aruco": null,
+    "targets": null,
+    "source_kind": "camera",
+    "distribution": {
+      "mqtt_port": null,
+      "video_port": null,
+      "host": "127.0.0.1",
+      "topic": "taip/local/results",
+      "mqtt_qos": 1,
+      "mqtt_retain": false
+    },
+    "enabled_processors": [],
+    "headless": false,
+    "detection_capture": null,
+    "max_frames": null,
+    "max_processing_ms": null,
+    "source_timeout_s": 5.0,
+    "software": {
+      "python": "3.12.15",
+      "opencv": "4.14.0",
+      "numpy": "2.5.2",
+      "depthai": "2.32.0.0"
+    },
+    "measurement": {
+      "latency": "DepthAI timestamp to application dequeue; excludes conversion and CV",
+      "timings": "Host perf_counter stage durations; source_read includes waiting and BGR conversion",
+      "percentile": "Latency P95 over most recent up to 2048 processed frames; mean and counts cover whole run",
+      "end_to_end": "Display call duration does not measure physical screen presentation or network latency"
+    },
+    "device": {
+      "product_name": "OAK-D-LITE",
+      "mxid": "1844301031F2EA0F00",
+      "usb_speed": "SUPER"
+    }
+  },
+  "frames_recorded": 716,
+  "partial_frames": 0,
+  "stop_reason": "exception",
+  "finished_at_utc": "2026-10-09T13:41:49.596626+00:00",
+  "summary": null,
+  "error": "error: OpenCV(4.14.0) /io/opencv/modules/highgui/src/window_QT.cpp:179: error: (-27:Null pointer) NULL guiReceiver (please create a window) in function 'cvGetPropVisible_QT'\n",
+  "mean_timings_ms": {
+    "source_read": 25.499887444132973,
+    "processing": 0.0512135796103386,
+    "composition": 0.6708616452519434,
+    "display": 7.304902462290684,
+    "iteration_before_logging": 33.52686513128594
+  }
+}
