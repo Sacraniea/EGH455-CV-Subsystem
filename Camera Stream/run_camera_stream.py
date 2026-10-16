@@ -17,7 +17,7 @@ import numpy as np
 from depthai_source import DepthAIFrameSource
 from local_display import OpenCVDisplay
 from stream_controller import run_stream
-from stream_types import get_stream_profile
+from stream_types import STREAM_PROFILE_NAMES, get_stream_profile
 from stream_records import write_complete_run_record
 from stream_session import StreamSession
 
@@ -58,7 +58,7 @@ def positive_finite(value):
 def build_parser():
     # Define the camera, processor, capture and output options for this command.
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=("720p30", "1080p30"), default="720p30")
+    parser.add_argument("--profile", choices=STREAM_PROFILE_NAMES, default="720p30")
     parser.add_argument(
         "--synthetic",
         action="store_true",

@@ -14,6 +14,7 @@ from urllib.request import urlopen
 from uuid import uuid4
 import webbrowser
 from run_video_receiver import http_bind_host
+from stream_types import STREAM_PROFILE_NAMES
 
 
 def check_ports(ports, *, http_host="127.0.0.1"):
@@ -274,9 +275,9 @@ def build_parser():
     )
     parser.add_argument(
         "--profile",
-        choices=("720p30", "1080p30"),
+        choices=STREAM_PROFILE_NAMES,
         default="1080p30",
-        help="Capture resolution at a requested 30 FPS (default: 1080p30).",
+        help="Capture resolution and requested frame rate (default: 1080p30).",
     )
     parser.add_argument(
         "--max-frames",
