@@ -46,6 +46,7 @@ _STREAM_PROFILES = {
         width=640,
         height=480,
         fps=20.0,
+    ),
     "480p15": StreamProfile(
         name="480p15",
         width=640,

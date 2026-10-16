@@ -2,7 +2,7 @@
 
 from dataclasses import asdict, replace
 from enum import Enum
-from hashlib import file_digest
+from hashlib import file_digest, sha256
 from math import isfinite
 from numbers import Real
 from pathlib import Path

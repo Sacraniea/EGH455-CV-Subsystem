@@ -100,7 +100,7 @@ def build_parser():
     )
     parser.add_argument(
         "--profile",
-        choices = ("480p20", "720p15", "720p30", "1080p30"),
+        choices = ("480p15", "480p20", "720p15", "720p30", "1080p30"),
         default = "720p30",
     )
     parser.add_argument("--source-timeout-s", type = float, default = 10.0)

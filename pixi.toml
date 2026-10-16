@@ -7,7 +7,7 @@ version = "0.1.0"
 
 [tasks]
 # Run the full subsystem until Ctrl+C. Add the GCS address to publish logs and photos.
-cv-subsystem = { cmd = ["python", "-B", "run_local_demo.py", "--camera", "--targets", "--profile", "480p15", "--max-frames", "0", "--gcs", "auto", "--capture-interval-s", "3", "--calibration", "../ArUco Detection/calibration/oak_cam_a.json", "--calibration-mode", "oak-1080", "--marker-side-length-m", "0.20"], cwd = "Camera Stream", description = "Run until Ctrl+C; add a GCS address to publish logs and photos." }
+cv-subsystem = { cmd = ["python", "-B", "run_subsystem.py", "--source", "oak", "--profile", "480p15", "--max-frames", "0", "--capture-interval", "3", "--calibration", "../ArUco Detection/calibration/oak_cam_a.json", "--calibration-mode", "oak-1080", "--marker-side-length-m", "0.20"], cwd = "Camera Stream", description = "Run until Ctrl+C; add a GCS address to publish logs and photos." }
 
 # Check video and marker processing without connecting a camera.
 cv-sys-synthetic-test = { cmd = ["python", "-B", "run_subsystem.py", "--source", "synthetic", "--no-targets", "--profile", "720p30", "--max-frames", "300", "--open-browser"], cwd = "Camera Stream", description = "Show 300 generated marker frames and save their results locally." }
