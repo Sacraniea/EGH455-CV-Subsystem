@@ -6,20 +6,24 @@ platforms = ["linux-64", "win-64", { platform = "osx-arm64", macos = "14.0" }, "
 version = "0.1.0"
 
 [tasks]
-# Run the full subsystem until Ctrl+C. Add the GCS address to publish logs and photos.
-cv-subsystem = { cmd = ["python", "-B", "run_local_demo.py", "--camera", "--targets", "--profile", "720p30", "--max-frames", "0", "--gcs", "auto", "--capture-interval-s", "3", "--calibration", "../ArUco Detection/calibration/oak_cam_a.json", "--calibration-mode", "oak-1080", "--marker-side-length-m", "0.20"], cwd = "Camera Stream", description = "Run until Ctrl+C; add a GCS address to publish logs and photos." }
+# Run the OAK subsystem until Ctrl+C. Add the GCS address to send logs and photos.
+cv-subsystem = { cmd = ["python", "-B", "run_subsystem.py", "--source", "oak", "--profile", "720p30", "--max-frames", "0", "--capture-interval-s", "3", "--calibration", "../ArUco Detection/calibration/oak_cam_a.json", "--calibration-mode", "oak-1080", "--marker-side-length-m", "0.20"], cwd = "Camera Stream", description = "Run the OAK camera and both detection paths; add a GCS broker address to publish." }
 
-# 10 Second Synthetic test for System Without the Camera
-cv-sys-synthetic-test = { cmd = ["python", "-B", "run_local_demo.py", "--profile", "720p30", "--max-frames", "300", "--gcs", "preview", "--open-browser"], cwd = "Camera Stream", description = "Test the complete local transport with 300 generated marker frames." }
+# Check video and marker processing without connecting a camera.
+cv-sys-synthetic-test = { cmd = ["python", "-B", "run_subsystem.py", "--source", "synthetic", "--no-targets", "--profile", "720p30", "--max-frames", "300", "--open-browser"], cwd = "Camera Stream", description = "Show 300 generated marker frames and save their results locally." }
 
-# Check camera capture on its own.
-cv-sys-camera-test = { cmd = ["python", "-B", "run_camera_stream.py", "--headless", "--profile", "720p30", "--max-frames", "90", "--source-timeout-s", "10"], cwd = "Camera Stream", description = "Read 90 camera frames without detection or a preview window." }
+# Check OAK capture alone, with no detectors, video receiver, browser or photos.
+cv-sys-camera-test = { cmd = ["python", "-B", "run_stream.py", "--source", "oak", "--no-targets", "--no-aruco", "--no-photos", "--no-video", "--profile", "720p30", "--max-frames", "90", "--source-timeout-s", "10"], cwd = "Camera Stream", description = "Read and record 90 OAK frames without starting network services." }
 
-# Run Target Detection Locally
-cv-sys-target-detection-test = { cmd = ["python", "-B", "run_camera_stream.py", "--targets", "--profile", "720p30", "--max-frames", "3000", "--source-timeout-s", "10"], cwd = "Camera Stream", description = "Preview target detection and gauge reading for up to 3000 frames." }
+# Preview gauge and valve detection from the OAK camera.
+cv-sys-target-detection-test = { cmd = ["python", "-B", "run_subsystem.py", "--source", "oak", "--no-aruco", "--no-photos", "--profile", "720p30", "--max-frames", "3000", "--source-timeout-s", "10", "--open-browser"], cwd = "Camera Stream", description = "Show gauge and valve detection for up to 3000 frames; Ctrl+C stops early." }
 
-# Run Camera Stream and Target Detection Locally
-cv-sys-local-test = { cmd = ["python", "-B", "run_local_demo.py", "--camera", "--targets", "--profile", "720p30", "--max-frames", "900", "--gcs", "preview", "--capture-interval-s", "3", "--calibration", "../ArUco Detection/calibration/oak_cam_a.json", "--calibration-mode", "oak-1080", "--marker-side-length-m", "0.20", "--open-browser"], cwd = "Camera Stream", description = "Test 900 camera frames, browser video, MQTT and GCS previews." }
+# Run a finite OAK test with both detection paths and local detection photos.
+cv-sys-local-test = { cmd = ["python", "-B", "run_subsystem.py", "--source", "oak", "--profile", "720p30", "--max-frames", "900", "--capture-interval-s", "3", "--calibration", "../ArUco Detection/calibration/oak_cam_a.json", "--calibration-mode", "oak-1080", "--marker-side-length-m", "0.20", "--open-browser"], cwd = "Camera Stream", description = "Test 900 OAK frames, detection overlays and saved photos without a GCS address." }
+
+# Use these only when starting the receiver and sender in separate terminals.
+cv-sys-receiver = { cmd = ["python", "-B", "run_receiver.py"], cwd = "Camera Stream", description = "Receive annotated video and serve /stream.mjpeg." }
+cv-sys-stream = { cmd = ["python", "-B", "run_stream.py", "--source", "oak", "--profile", "720p30", "--calibration", "../ArUco Detection/calibration/oak_cam_a.json", "--calibration-mode", "oak-1080", "--marker-side-length-m", "0.20"], cwd = "Camera Stream", description = "Run the OAK sender when a NetGear receiver is already listening." }
 
 [dependencies]
 python = "3.12.*"

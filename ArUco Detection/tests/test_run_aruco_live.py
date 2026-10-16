@@ -35,6 +35,7 @@ class Source:
         self.iterator = iter(self.packets)
         self.device_details = DeviceDetails("OAK-D-LITE", "test-device", "SUPER")
         self.closed = False
+        self.close_count = 0
         self.fail = fail
 
     def read(self):
@@ -46,12 +47,14 @@ class Source:
 
     def close(self):
         self.closed = True
+        self.close_count += 1
 
 
 class Display:
     def __init__(self):
         self.packets = []
         self.closed = False
+        self.close_count = 0
 
     def show(self, packet):
         # Retain each displayed packet and let the configured frame limit stop the run.
@@ -60,6 +63,7 @@ class Display:
 
     def close(self):
         self.closed = True
+        self.close_count += 1
 
 
 class LiveRunnerTests(unittest.TestCase):
@@ -94,8 +98,8 @@ class LiveRunnerTests(unittest.TestCase):
             ]
             manifest = json.loads((root / "run" / "run.json").read_text())
 
-        self.assertTrue(source.closed)
-        self.assertTrue(display.closed)
+        self.assertEqual(source.close_count, 1)
+        self.assertEqual(display.close_count, 1)
         self.assertEqual([f["sequence_number"] for f in frames], [41, 43])
         self.assertEqual(
             frames[0]["results"][0]["failure_reason"], "MISSING_CALIBRATION"
@@ -191,8 +195,8 @@ class LiveRunnerTests(unittest.TestCase):
             self.assertEqual(self.run_command(root, source, display), 1)
             manifest = json.loads((root / "run" / "run.json").read_text())
 
-        self.assertTrue(source.closed)
-        self.assertTrue(display.closed)
+        self.assertEqual(source.close_count, 1)
+        self.assertEqual(display.close_count, 1)
         self.assertEqual(manifest["status"], "failed")
         self.assertIn("camera disconnected", manifest["error"])
 
@@ -275,8 +279,8 @@ class LiveRunnerTests(unittest.TestCase):
             self.assertEqual(self.run_command(root, source, display), 130)
             manifest = json.loads((root / "run" / "run.json").read_text())
 
-        self.assertTrue(source.closed)
-        self.assertTrue(display.closed)
+        self.assertEqual(source.close_count, 1)
+        self.assertEqual(display.close_count, 1)
         self.assertEqual(manifest["status"], "interrupted")
 
     def test_help_from_any_directory(self):
@@ -307,8 +311,8 @@ class LiveRunnerTests(unittest.TestCase):
             self.assertEqual(self.run_command(root, source, display), 1)
             manifest = json.loads((root / "run" / "run.json").read_text())
 
-        self.assertTrue(source.closed)
-        self.assertTrue(display.closed)
+        self.assertEqual(source.close_count, 1)
+        self.assertEqual(display.close_count, 1)
         self.assertEqual(manifest["status"], "failed")
 
 

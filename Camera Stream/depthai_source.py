@@ -95,10 +95,10 @@ class DepthAIFrameSource:
 
         # Prepare the output queue and read the connected device's details.
         try:
-            # Keep up to four frames; let new arrivals replace older queued frames.
+            # Keep only the newest waiting frame while detection processes the last one.
             self._queue = self._device.getOutputQueue(
                 name="rgb",
-                maxSize=4,
+                maxSize=1,
                 blocking=False,
             )
 

@@ -172,7 +172,9 @@ def preprocess_candidate(
         clipLimit=2.0,
         tileGridSize=(8, 8),
     )
-    working_gray = clahe.apply(denoised)
+
+    # Keep smoothed greyscale image for the local bightness comparison.
+    working_gray = denoised
 
     return PreprocessOutcome(
         valid=True,

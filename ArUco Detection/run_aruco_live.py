@@ -17,12 +17,11 @@ if str(STREAM_DIRECTORY) not in sys.path:
 
 import cv2
 import numpy as np
-from stream_controller import run_stream
 from stream_types import get_stream_profile
 
 from aruco_calibration import load_calibration, load_stream_calibration
 from aruco_cli import add_processing_arguments, config_from_args
-from aruco_live import ArUcoDisplay
+from aruco_live import ArUcoDisplay, OpenCVPreview, run_live
 from aruco_records import ArUcoRunRecorder
 
 
@@ -37,10 +36,8 @@ def positive_int(value):
 
 
 def default_display_factory(*, window_name):
-    from local_display import OpenCVDisplay
-
-    # Return the shared display, which creates its window when it receives a frame.
-    return OpenCVDisplay(window_name=window_name)
+    # The standalone preview needs no video sender or network receiver.
+    return OpenCVPreview(window_name=window_name)
 
 
 def main(argv=None, *, source_factory=None, display_factory=None, printer=print):
@@ -188,9 +185,8 @@ def main(argv=None, *, source_factory=None, display_factory=None, printer=print)
                 on_result=recorder.write,
                 max_frames=args.max_frames,
             )
-            # Transfer camera/display cleanup to run_stream before starting its frame loop.
-            resources.pop_all()
-            summary = asdict(run_stream(source, adapter, requested_fps=profile.fps))
+            # This ExitStack owns camera/display cleanup on every exit path.
+            summary = run_live(source, adapter, requested_fps=profile.fps)
             status, reason, exit_code = "complete", adapter.stop_reason, 0
 
     except KeyboardInterrupt:

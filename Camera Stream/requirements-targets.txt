@@ -1,5 +1,0 @@
-# Optional target detection runtime; install in a separate .venv-targets environment.
--r requirements-network.txt
-ultralytics==8.4.174
-torch==2.13.0
-torchvision==0.28.0

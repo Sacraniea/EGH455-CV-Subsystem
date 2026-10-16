@@ -1,4 +1,4 @@
-"""Locate a central needle component, its pivot, and its longer pointer end."""
+"""Locate the needle pivot and follow the pointer outward through dark pixels."""
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
@@ -6,7 +6,6 @@ from typing import Any, Dict, Optional, Tuple
 import cv2
 import numpy as np
 
-from gauge_geometry import angle_from_points
 from gauge_types import FailureReason, Point, ReaderConfig
 
 
@@ -29,12 +28,9 @@ class NeedleDetection:
 
 @dataclass(frozen=True)
 class _NeedleComponent:
-    """Keep the pixels and principal axis of an eligible dark component."""
+    """Keep the identity and position of a possible needle shape."""
 
     label: int
-    points: np.ndarray
-    axis: np.ndarray
-    elongation: float
     distance_from_centre: float
     area: int
 
@@ -43,9 +39,9 @@ def _select_component(
     mask: np.ndarray,
     centre: np.ndarray,
     side: float,
-    minimum_elongation: float,
 ) -> Tuple[Optional[_NeedleComponent], np.ndarray, int]:
-    """Choose the closest sufficiently large, elongated central component."""
+    """Choose a substantial dark shape that reaches near the crop centre."""
+
     count, labels, bounds, _ = cv2.connectedComponentsWithStats(
         mask,
         connectivity=8,
@@ -72,23 +68,14 @@ def _select_component(
         ys, xs = np.nonzero(labels == label)
         points = np.column_stack([xs, ys]).astype(float)
         nearest = float(np.min(np.linalg.norm(points - centre, axis=1)))
+
         if nearest > 0.15 * side:
             continue
 
-        # Covariance measures the pixels' spread in different directions; its
-        # eigenvectors identify the axes, with the greatest spread along the hand.
-        covariance = np.cov(points, rowvar=False)
-        eigenvalues, eigenvectors = np.linalg.eigh(covariance)
-        elongation = float(eigenvalues[-1] / max(eigenvalues[0], 1.0))
-        if elongation < minimum_elongation:
-            continue
-
+        # A scale marking may touch the hand, so judge its direction later.
         candidates.append(
             _NeedleComponent(
                 label=label,
-                points=points,
-                axis=eigenvectors[:, -1],
-                elongation=elongation,
                 distance_from_centre=nearest,
                 area=int(area),
             )
@@ -109,14 +96,24 @@ def _select_component(
 
 
 def _component_thickness(labels: np.ndarray, label: int) -> np.ndarray:
-    """Fill bright holes inside the selected hand before measuring thickness."""
+    """Fill small holes in the hand, then measure distance from its edges."""
+
     component = (labels == label).astype(np.uint8) * 255
 
     # Fill only this component's enclosed holes, such as a bright brass hub.
     padded = np.pad(component, 1, constant_values=0)
     flooded = padded.copy()
     cv2.floodFill(flooded, None, (0, 0), 255)
-    filled = cv2.bitwise_or(padded, cv2.bitwise_not(flooded))[1:-1, 1:-1]
+    holes = cv2.bitwise_not(flooded)[1:-1, 1:-1]
+    count, hole_labels, bounds, _ = cv2.connectedComponentsWithStats(holes)
+    filled = component.copy()
+
+    # Fill a small reflection inside the hub, but never fill the whole dial
+    # when its printed scale has become connected to the needle.
+    for hole in range(1, count):
+        if bounds[hole, cv2.CC_STAT_AREA] <= 0.01 * component.size:
+            filled[hole_labels == hole] = 255
+
     return cv2.distanceTransform(filled, cv2.DIST_L2, 5)
 
 
@@ -126,9 +123,11 @@ def _find_pivot(
     side: float,
 ) -> Tuple[Optional[np.ndarray], float]:
     """Choose a substantial local thickness peak near the crop centre."""
+
     ys, xs = np.indices(thickness.shape)
     central = np.hypot(xs - centre[0], ys - centre[1]) <= 0.20 * side
     maximum = float(np.max(thickness[central]))
+
     if maximum < 0.008 * side:
         return None, maximum
 
@@ -141,6 +140,7 @@ def _find_pivot(
         & (thickness >= 0.70 * maximum)
     )
     peak_ys, peak_xs = np.nonzero(peaks)
+
     if peak_xs.size == 0:
         # A thick feature may extend inside the search area while its peak is outside.
         return None, maximum
@@ -148,6 +148,59 @@ def _find_pivot(
     points = np.column_stack([peak_xs, peak_ys]).astype(float)
     nearest = np.argmin(np.linalg.norm(points - centre, axis=1))
     return points[nearest], maximum
+
+
+def _radial_reach(
+    mask: np.ndarray,
+    pivot: np.ndarray,
+    hub_radius: float,
+) -> np.ndarray:
+    """Measure the continuous dark reach at each clockwise, whole-degree angle."""
+
+    # Start just outside the round hub so its width cannot favour a direction.
+    angles = np.deg2rad(np.arange(360, dtype=np.float32))[:, None, None]
+    radii = np.arange(
+        np.ceil(hub_radius * 1.2),
+        min(mask.shape) * 0.45,
+        dtype=np.float32,
+    )[None, :, None]
+    offsets = np.array([-1, 0, 1], dtype=np.float32)[None, None, :]
+
+    if radii.size < 3:
+        return np.zeros(360)
+
+    # Sample a three-pixel-wide strip along each ray to reduce pixel noise.
+    xs = pivot[0] + np.sin(angles) * radii + np.cos(angles) * offsets
+    ys = pivot[1] - np.cos(angles) * radii + np.sin(angles) * offsets
+    samples = cv2.remap(
+        mask,
+        xs.reshape(360, -1).astype(np.float32),
+        ys.reshape(360, -1).astype(np.float32),
+        cv2.INTER_NEAREST,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0,
+    ).reshape(360, -1, 3)
+    dark = np.count_nonzero(samples, axis=2) >= 2
+
+    # Allow a one- or two-pixel break. Three background pixels end the hand;
+    # a separate printed tick further out must not extend the measured reach.
+    gaps = (
+        ~dark[:, :-2]
+        & ~dark[:, 1:-1]
+        & ~dark[:, 2:]
+    )
+    first_gap = np.where(
+        gaps.any(axis=1),
+        gaps.argmax(axis=1),
+        dark.shape[1],
+    )
+
+    # Report distance from the pivot, or zero if no hand leaves the hub.
+    return np.where(
+        first_gap > 0,
+        radii[0, 0, 0] + first_gap,
+        0.0,
+    )
 
 
 def detect_needle(gray: np.ndarray, config: ReaderConfig) -> NeedleDetection:
@@ -175,14 +228,17 @@ def detect_needle(gray: np.ndarray, config: ReaderConfig) -> NeedleDetection:
     side = float(config.working_size)
     centre = np.array([gray.shape[1] / 2, gray.shape[0] / 2])
 
-    # Otsu chooses an automatic brightness cutoff and marks darker pixels foreground.
-    threshold, mask = cv2.threshold(
+    # Mark pixels darker than their nearby surroundings as possible needle pixels.
+    mask = cv2.adaptiveThreshold(
         gray,
-        0,
         255,
-        cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV,
+        blockSize=51,
+        C=10,
     )
-    metadata["otsu_threshold"] = float(threshold)
+
+    metadata["threshhold_method"] = "adaptive_gaussian"
 
     # Closing joins tiny gaps in the dark hand before connected-component detection.
     mask = cv2.morphologyEx(
@@ -194,63 +250,79 @@ def detect_needle(gray: np.ndarray, config: ReaderConfig) -> NeedleDetection:
         mask,
         centre,
         side,
-        config.minimum_needle_elongation,
     )
     metadata["candidate_components"] = candidate_count
+
     if component is None:
         return rejected(FailureReason.NO_NEEDLE)
 
     thickness = _component_thickness(labels, component.label)
     pivot_array, maximum = _find_pivot(thickness, centre, side)
     metadata.update(
-        component_area=int(len(component.points)),
-        elongation=component.elongation,
+        component_area=component.area,
         max_central_half_thickness_px=maximum,
     )
+
     if pivot_array is None:
         return rejected(FailureReason.NO_PIVOT)
 
     pivot = (float(pivot_array[0]), float(pivot_array[1]))
 
-    # Compare supported reach on both sides of the pivot along the principal axis.
-    projections = (component.points - pivot_array) @ component.axis
+    # Find which direction has the longest continuous hand leaving this pivot.
+    hub_radius = float(thickness[int(pivot[1]), int(pivot[0])])
 
-    # Quantiles ignore a few extreme pixels at either end of the component.
-    low, high = np.quantile(projections, [0.01, 0.99])
-    lengths = np.array([-low, high])
-    long_index = int(np.argmax(lengths))
-    long_length = float(lengths[long_index])
-    short_length = float(lengths[1 - long_index])
+    # Reuse the filled hand so a reflection inside a wide pointer cannot break
+    # the ray. Keep disconnected text and scale markings outside this mask.
+    hand_mask = (thickness > 0).astype(np.uint8) * 255
+    reaches = _radial_reach(hand_mask, pivot_array, hub_radius)
+    angle = int(np.argmax(reaches))
+    long_length = float(reaches[angle])
+
+    # Nearby rays describe the same hand. Look around the opposite direction
+    # for its counterweight, allowing a small offset from an exact straight line.
+    angles = np.arange(360)
+    separation = np.abs((angles - angle + 180) % 360 - 180)
+    short_length = float(np.max(reaches[separation >= 165]))
     direction_ratio = long_length / max(short_length, 1.0)
+    # Ignore rays within 20 degrees of the pointer and 15 of its opposite end.
+    # Any long ray elsewhere is a competing direction, so the reading is uncertain.
+    other_directions = (
+        (separation > 20)
+        & (separation < 165)
+    )
+    competing_length = float(np.max(reaches[other_directions]))
+    quality = max(0.0, 1.0 - short_length / max(long_length, 1.0))
     metadata.update(
+        direction_method="radial_search",
         long_side_px=long_length,
         short_side_px=short_length,
         direction_ratio=direction_ratio,
-        pivot_half_thickness_px=float(thickness[int(pivot[1]), int(pivot[0])]),
+        competing_side_px=competing_length,
+        pivot_half_thickness_px=hub_radius,
     )
-    if (
-        long_length > 0.0
-        and short_length >= 0.0
-    ):
-        quality = max(0.0, min(1.0, 1.0 - short_length / long_length))
 
+    # A short protrusion from the hub is not enough evidence of a pointer.
     if (
         long_length < 0.13 * side
-        or short_length < 0.0
+        or long_length < 3 * hub_radius
     ):
         return rejected(FailureReason.NO_NEEDLE)
 
-    if direction_ratio < config.minimum_needle_direction_ratio:
+    # Withhold pressure when the two ends or two separate directions compete.
+    if (
+        direction_ratio < config.minimum_needle_direction_ratio
+        or competing_length * config.minimum_needle_direction_ratio > long_length
+    ):
         return rejected(FailureReason.AMBIGUOUS_NEEDLE)
 
-    # The longer supported side is the reading pointer, not its counterweight.
-    # This axis endpoint measures its angle; it may lie inside the physical tip.
-    direction = component.axis if long_index == 1 else -component.axis
-    tip_array = pivot_array + direction * long_length
-    tip = (float(tip_array[0]), float(tip_array[1]))
+    radians = np.deg2rad(angle)
+    tip = (
+        float(pivot[0] + np.sin(radians) * long_length),
+        float(pivot[1] - np.cos(radians) * long_length),
+    )
     return NeedleDetection(
         valid=True,
-        angle_degrees=float(angle_from_points(pivot, tip)),
+        angle_degrees=float(angle),
         pivot=pivot,
         tip=tip,
         quality=quality,

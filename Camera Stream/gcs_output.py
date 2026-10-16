@@ -1,4 +1,7 @@
-"""Build the log messages and photo records that the GCS expects."""
+"""Prepare readable GCS logs and photo messages from completed detections.
+
+These functions build the message contents. MQTT publishing happens separately.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +15,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+
+# Replace the stored ArUco rejection codes with explanations for the GCS log.
 _POSE_REASONS = {
     "MISSING_CALIBRATION": "calibration missing",
     "CALIBRATION_SIZE_MISMATCH": "calibration does not match the frame size",
@@ -26,23 +31,30 @@ _POSE_REASONS = {
 
 
 def _finite_number(value):
-    # Check that a position, pixel coordinate or timestamp is a finite number.
-    # Return False for booleans, text, infinity and NaN before formatting them.
-    return type(value) in (int, float) and isfinite(value)
+    """Check that a measurement can be included as a number in the GCS text."""
+
+    # Require an ordinary number with a finite value before formatting a measurement.
+    return (
+        type(value) in (int, float)
+        and isfinite(value)
+    )
 
 
 def _camera_translation(result):
-    """Return camera-relative position only when the pose can be used."""
+    """Return the marker's camera-relative x, y and z when its pose is usable."""
+
     pose = result.get("pose")
 
-    # Return no translation if the marker was rejected or has no pose record.
-    if not result.get("valid") or not isinstance(pose, dict):
+    # Withhold position when the marker was rejected or no pose was supplied.
+    if (
+        not result.get("valid")
+        or not isinstance(pose, dict)
+    ):
         return None
 
     translation = pose.get("translation_m")
 
-    # Reject positions labelled with another coordinate system, incomplete or invalid
-    # x/y/z values, and a forward distance of zero or less.
+    # Require three finite camera coordinates and a marker in front of the camera.
     if (
         pose.get("coordinate_frame") != "camera_optical"
         or not isinstance(translation, (list, tuple))
@@ -56,72 +68,100 @@ def _camera_translation(result):
 
 
 def _marker_summary(result, processor_failed):
-    # Build one marker's log line, withholding its position if processing failed.
-    translation = None if processor_failed else _camera_translation(result)
+    """Describe one marker's position, or explain why its pose is unavailable."""
+
+    # A failed detector cannot supply a position, even if a candidate pose remains.
+    if processor_failed:
+        translation = None
+
+    else:
+        translation = _camera_translation(result)
 
     if translation is not None:
         x, y, z = translation
-        # The camera uses metres: X points right, Y down and Z forward.
-        # Convert to centimetres here so the log is easier to read.
+
+        # Convert the signs of the camera coordinates into readable directions.
+        if x >= 0:
+            horizontal_direction = "right"
+
+        else:
+            horizontal_direction = "left"
+
+        if y >= 0:
+            vertical_direction = "down"
+
+        else:
+            vertical_direction = "up"
+
+        # Report centimetres; z is forward depth along the camera's viewing axis.
         pose_text = (
-            f'{abs(x)*100:.1f} cm {"right" if x >= 0 else "left"}, '
-            f'{abs(y)*100:.1f} cm {"down" if y >= 0 else "up"}, '
-            f"{z*100:.1f} cm forward"
+            f"{abs(x) * 100:.1f} cm {horizontal_direction}, "
+            f"{abs(y) * 100:.1f} cm {vertical_direction}, "
+            f"{z * 100:.1f} cm forward"
         )
 
     else:
-        # Replace the unavailable position with the reason it was rejected.
-        code = result.get("failure_reason")
+        failure_code = result.get("failure_reason")
 
+        # Explain a detector failure before considering individual pose rejections.
         if processor_failed:
-            # A branch error takes priority over any individual pose result.
             reason = "detection processing failed"
 
-        elif code:
-            # Turn the stored failure code into a readable explanation.
-            reason = _POSE_REASONS.get(code, str(code).replace("_", " ").lower())
+        elif failure_code:
+            # Use the known explanation, or make an unfamiliar code readable.
+            fallback_reason = str(failure_code).replace("_", " ").lower()
+            reason = _POSE_REASONS.get(failure_code, fallback_reason)
 
         else:
             reason = "pose did not pass validation"
 
-        error = result.get("reprojection_error_px")
+        error_px = result.get("reprojection_error_px")
 
+        # Include the corner-fit error when that measurement caused the rejection.
         if (
             not processor_failed
-            and code == "REPROJECTION_ERROR_TOO_HIGH"
-            and _finite_number(error)
+            and failure_code == "REPROJECTION_ERROR_TOO_HIGH"
+            and _finite_number(error_px)
         ):
-            # Include the measured pixel error when it caused the pose rejection.
-            reason += f": {error:.2f} px"
+            reason += f": {error_px:.2f} px"
 
         pose_text = f"pose unavailable ({reason})"
 
     corners = result.get("corners_px")
 
-    # Calculate image position only when all four corners have numeric x/y values.
-    if (
+    # Require all four marker corners before calculating its image position.
+    corners_valid = (
         isinstance(corners, (list, tuple))
         and len(corners) == 4
-        and all(
-            isinstance(point, (list, tuple))
-            and len(point) == 2
-            and all(_finite_number(value) for value in point)
-            for point in corners
-        )
-    ):
-        # Average the four corners to give a position in the original image.
-        u, v = (sum(point[axis] for point in corners) / 4 for axis in (0, 1))
-        image_text = f"image position ({u:.0f}, {v:.0f}) px"
+    )
+
+    if corners_valid:
+        for point in corners:
+            # Each corner must contain a usable horizontal and vertical coordinate.
+            if (
+                not isinstance(point, (list, tuple))
+                or len(point) != 2
+                or not all(_finite_number(value) for value in point)
+            ):
+                corners_valid = False
+                break
+
+    if corners_valid:
+        # Average the four corners to locate the marker in the original image.
+        centre_x = sum(point[0] for point in corners) / 4
+        centre_y = sum(point[1] for point in corners) / 4
+        image_text = f"image position ({centre_x:.0f}, {centre_y:.0f}) px"
 
     else:
-        # Do not invent an image position when the corner coordinates are missing.
         image_text = "image position unavailable"
 
     return f'Marker {result["marker_id"]}: {pose_text}; {image_text}.'
 
 
 def _find_processor(record, name):
-    """Return this frame's result for the named processor, when it is present."""
+    """Find the saved result for a named detector in this frame."""
+
+    # Each frame can contain several detectors, such as targets and ArUco.
     for processor in record.get("processors", []):
         if processor.get("processor") == name:
             return processor
@@ -130,34 +170,41 @@ def _find_processor(record, name):
 
 
 def gcs_log_payload(record: dict) -> dict | None:
-    """Turn one frame's ArUco results into a readable GCS log message."""
+    """Combine this frame's ArUco observations into one GCS log message."""
 
+    # Require our frame-record format before reading its detector results.
     if record.get("producer") != "camera_stream":
         raise ValueError("GCS ArUco logs require a native camera_stream record")
 
-    # Find the ArUco entry in the frame's processor results; ignore other models.
     processor = _find_processor(record, "aruco")
 
+    # A frame without ArUco processing has no ArUco message to prepare.
     if processor is None:
-        # There is no ArUco result to turn into a GCS log for this frame.
         return None
 
     failure = processor.get("failure_reason")
 
-    # Skip frames with neither an ArUco detection nor an ArUco processing error.
-    if not failure and not processor.get("data", {}).get("results"):
+    # An empty successful detection produces no log; a processing failure still does.
+    if (
+        not failure
+        and not processor.get("data", {}).get("results")
+    ):
         return None
 
-    # Work on a copy so building the log doesn't change our saved evidence.
-    content = {
-        key: deepcopy(value) for key, value in record.items() if key != "processors"
-    }
-    processor = deepcopy(processor)
-    content["processors"] = [processor]
-    results = processor.get("data", {}).get("results", [])
+    # Copy the frame details and just the ArUco result for validation.
+    # Removing a rejected pose here must not change the original frame evidence.
+    aruco_record = {}
 
-    for result in results:
-        # Accept a pose only if the branch and marker succeeded and a pose exists.
+    for key, value in record.items():
+        if key != "processors":
+            aruco_record[key] = deepcopy(value)
+
+    processor = deepcopy(processor)
+    aruco_record["processors"] = [processor]
+    marker_results = processor.get("data", {}).get("results", [])
+
+    for result in marker_results:
+        # Keep a pose only when both processing and this marker's checks succeeded.
         accepted = (
             not failure
             and result.get("valid") is True
@@ -166,41 +213,64 @@ def gcs_log_payload(record: dict) -> dict | None:
         )
 
         if not accepted:
-            # Mark this copied result invalid and remove its rejected pose.
             result["valid"] = False
             result["pose"] = None
 
-    # Check the copied evidence can be encoded as JSON; raise on NaN or infinity.
-    json.dumps(content, allow_nan=False)
-    # Choose the action label from the branch status and usable marker positions.
-    action = (
-        "ArUco processing error"
-        if failure
-        else (
-            "ArUco detected"
-            if any(_camera_translation(result) is not None for result in results)
-            else "ArUco detected - pose unavailable"
-        )
-    )
-    lines = ["Synthetic demo."] if record.get("source_kind") == "synthetic" else []
+    # Reject remaining evidence that cannot be represented as standard JSON.
+    json.dumps(aruco_record, allow_nan = False)
+
+    # Distinguish a detector failure from detected markers with unavailable poses.
+    if failure:
+        action = "ArUco processing error"
+
+    else:
+        action = "ArUco detected - pose unavailable"
+
+        # One accepted camera position is enough to use the normal detection label.
+        for result in marker_results:
+            if _camera_translation(result) is not None:
+                action = "ArUco detected"
+                break
+
+    lines = []
+
+    # Mark generated test frames so their messages cannot be mistaken for camera data.
+    if record.get("source_kind") == "synthetic":
+        lines.append("Synthetic demo.")
 
     if failure:
         lines.append("Detection processing failed; no pose reported.")
 
-    lines.extend(_marker_summary(result, bool(failure)) for result in results)
-    # Add the frame number, elapsed device time and run ID to identify the reading.
+    # Keep every decoded marker in the message, including rejected poses.
+    for result in marker_results:
+        lines.append(
+            _marker_summary(result, bool(failure))
+        )
+
+    # Include the source clock value, frame number and run ID for later verification.
     device_time = record.get("device_timestamp_s")
-    time_text = f"{device_time:.3f} s" if _finite_number(device_time) else "unavailable"
+
+    if _finite_number(device_time):
+        time_text = f"{device_time:.3f} s"
+
+    else:
+        time_text = "unavailable"
+
     lines.append(
-        f'Frame {record["sequence_number"]} | Device time {time_text} | Run {record["run_id"]}'
+        f'Frame {record["sequence_number"]} | '
+        f'Device time {time_text} | Run {record["run_id"]}'
     )
 
-    return {"action": action, "content": "\n".join(lines)}
+    return {
+        "action": action,
+        "content": "\n".join(lines),
+    }
 
 
 def _target_image_position(box):
-    """Describe the centre of a valid target box in original-frame pixels."""
+    """Describe the centre of a gauge or valve box in the original frame."""
 
+    # Require four finite edges that form a box with positive width and height.
     if (
         not isinstance(box, (list, tuple))
         or len(box) != 4
@@ -208,31 +278,40 @@ def _target_image_position(box):
         or box[2] <= box[0]
         or box[3] <= box[1]
     ):
-        # Keep the detection but withhold its position when the box is unusable.
         return "image position unavailable"
 
-    # Average each pair of edges without summing large coordinates first.
-    u = box[0] / 2 + box[2] / 2
-    v = box[1] / 2 + box[3] / 2
-    return f"image position ({u:g}, {v:g}) px"
+    # Halve each edge before adding to avoid overflowing with large coordinates.
+    centre_x = box[0] / 2 + box[2] / 2
+    centre_y = box[1] / 2 + box[3] / 2
+    return f"image position ({centre_x:g}, {centre_y:g}) px"
 
 
 def gcs_log_payloads(record: dict) -> list[dict]:
-    """Keep the ArUco log and add one readable log for each gauge or valve."""
+    """Prepare the ArUco log, then one log for each detected gauge or valve."""
 
-    # Reuse the existing ArUco formatter so photo captions and old logs stay the same.
-    aruco = gcs_log_payload(record)
-    payloads = [] if aruco is None else [aruco]
+    payloads = []
+
+    # Add the combined ArUco message first when this frame has one.
+    aruco_message = gcs_log_payload(record)
+
+    if aruco_message is not None:
+        payloads.append(aruco_message)
+
     processor = _find_processor(record, "targets")
 
+    # Keep any ArUco message even when target detection was not run.
     if processor is None:
         return payloads
 
-    prefix = "Synthetic demo. " if record.get("source_kind") == "synthetic" else ""
+    prefix = ""
+
+    if record.get("source_kind") == "synthetic":
+        prefix = "Synthetic demo. "
+
     frame = f'Frame {record["sequence_number"]}'
 
+    # Report a failed target detector once, without using its candidate readings.
     if processor.get("failure_reason") is not None:
-        # Report the failed branch without publishing any candidate or stale readings.
         payloads.append(
             {
                 "action": "Target processing error",
@@ -246,13 +325,16 @@ def gcs_log_payloads(record: dict) -> list[dict]:
 
         if class_name == "gauge":
             action = "Gauge detected"
+
+            # Use the reading after confirmation, rather than the raw candidate value.
             reading = result.get("gauge_reading")
             summary = "Pressure unavailable"
 
             if result.get("reading_status") == "pending":
-                # Keep a sudden candidate reading out of logs until later frames agree.
                 summary = "Pressure unavailable (awaiting confirmation)"
 
+            # Include pressure only when the reading passed validation and is not pending.
+            # Older records without a confirmation status retain their accepted reading.
             if (
                 isinstance(reading, dict)
                 and reading.get("valid") is True
@@ -260,20 +342,27 @@ def gcs_log_payloads(record: dict) -> list[dict]:
                 and _finite_number(reading.get("value_bar"))
                 and result.get("reading_status") in (None, "confirmed")
             ):
-                # Show only accepted pressure, rounded without unnecessary zeros.
+                # Keep up to two decimal places, removing unnecessary trailing zeros.
                 pressure = f'{reading["value_bar"]:.2f}'.rstrip("0").rstrip(".")
                 summary = f"Pressure: {pressure} bar"
 
         elif class_name in ("openValve", "closedValve"):
             action = "Valve detected"
-            summary = "Open valve" if class_name == "openValve" else "Closed valve"
+
+            # Use the valve state already identified by the target model.
+            if class_name == "openValve":
+                summary = "Open valve"
+
+            else:
+                summary = "Closed valve"
 
         else:
-            # Skip unrecognised classes rather than inventing a gauge or valve state.
+            # Only the recognised gauge and valve classes have GCS target messages.
             continue
 
         position = _target_image_position(result.get("bbox_xyxy_px"))
-        # Keep remote text compact; the native record retains the full run identity.
+
+        # Give each target its own short log with its image position and frame number.
         payloads.append(
             {
                 "action": action,
@@ -291,8 +380,9 @@ def gcs_detection_payload(
     *,
     timestamp: str | None = None,
 ) -> dict:
-    """Package an original photo for MQTT without changing its image bytes."""
+    """Package a selected photo for the GCS, preserving the file's image bytes."""
 
+    # Require text for the photo's category and caption in the GCS history.
     if (
         not isinstance(target_type, str)
         or not isinstance(description, str)
@@ -300,55 +390,72 @@ def gcs_detection_payload(
         raise ValueError("Detection type and description must be strings")
 
     if timestamp is not None:
-        # Parse the supplied capture time and reject text without a timezone.
+        # Validate a supplied capture time, keeping its original text for the message.
         if not isinstance(timestamp, str):
             raise ValueError(
                 "Detection timestamp must be an ISO 8601 string with a timezone"
             )
 
         try:
-            parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            parsed_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
 
         except ValueError as error:
             raise ValueError(
                 "Detection timestamp must be an ISO 8601 string with a timezone"
             ) from error
 
-        if parsed.utcoffset() is None:
+        # A timezone is required so the GCS can interpret the capture time correctly.
+        if parsed_time.utcoffset() is None:
             raise ValueError("Detection timestamp must include a timezone")
 
     path = Path(path)
-    mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}.get(
-        path.suffix.lower()
-    )
+
+    # Tell the GCS which image format to expect from the selected file.
+    image_formats = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+    }
+    mime = image_formats.get(path.suffix.lower())
 
     if mime is None:
         raise ValueError("Detection images must be .jpg, .jpeg or .png files")
 
-    original = path.read_bytes()
-    # Check the file begins with the JPEG or PNG signature required by its suffix.
-    signature = b"\xff\xd8\xff" if mime == "image/jpeg" else b"\x89PNG\r\n\x1a\n"
+    image_bytes = path.read_bytes()
 
-    if not original.startswith(signature):
+    # Check the file's opening bytes agree with its JPEG or PNG extension.
+    if mime == "image/jpeg":
+        signature = b"\xff\xd8\xff"
+
+    else:
+        signature = b"\x89PNG\r\n\x1a\n"
+
+    if not image_bytes.startswith(signature):
         raise ValueError("Image bytes do not match the file extension")
 
-    # Decode the bytes for validation without replacing the original image file.
-    image = cv2.imdecode(np.frombuffer(original, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    # Decode once to check the photo can be opened; keep the original bytes for sending.
+    image = cv2.imdecode(
+        np.frombuffer(image_bytes, dtype = np.uint8),
+        cv2.IMREAD_UNCHANGED,
+    )
 
-    if image is None or image.size == 0:
+    if (
+        image is None
+        or image.size == 0
+    ):
         raise ValueError("Detection image could not be decoded")
 
-    # Return the five fields expected by the GCS detection-image receiver.
+    # Convert the selected file bytes to text for JSON without re-encoding the image.
+    encoded_image = base64.b64encode(image_bytes).decode("ascii")
+
+    # Without a supplied capture time, report when this message was prepared in UTC.
+    if timestamp is None:
+        timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
     return {
         "type": target_type,
         "description": description,
         "mime": mime,
-        # Encode the original file bytes as Base64 text without changing the image.
-        "image": base64.b64encode(original).decode("ascii"),
-        # With no capture time supplied, this is when we prepared the message.
-        "timestamp": (
-            timestamp
-            if timestamp is not None
-            else datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        ),
+        "image": encoded_image,
+        "timestamp": timestamp,
     }

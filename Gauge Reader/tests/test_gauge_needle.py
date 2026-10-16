@@ -73,9 +73,8 @@ class GaugeNeedleTests(unittest.TestCase):
         self.assertGreater(result.tip[1], 325)
         np.testing.assert_allclose(result.pivot, (256, 256), atol=2.0)
 
-    def test_wide_needle_can_use_a_lower_elongation_threshold(self):
+    def test_wide_needle_can_use_a_lower_direction_ratio(self):
         config = ReaderConfig(
-            minimum_needle_elongation=2.0,
             minimum_needle_direction_ratio=1.2,
         )
 

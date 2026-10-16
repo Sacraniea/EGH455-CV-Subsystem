@@ -1,6 +1,10 @@
 """Connect ArUco processing to the standalone live command's display."""
 
+from collections import deque
 from dataclasses import replace
+from math import ceil, isfinite
+
+import cv2
 
 from aruco_overlay import draw_aruco_overlay
 from aruco_pose import validate_reprojection_limit
@@ -74,3 +78,79 @@ class ArUcoDisplay:
 
     def close(self) -> None:
         self._display.close()
+
+
+class OpenCVPreview:
+    """Own only the standalone ArUco preview window, created on its first frame."""
+
+    def __init__(self, *, window_name):
+        self.window_name = window_name
+        self._opened = False
+
+    def show(self, packet):
+        if not self._opened:
+            cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+            self._opened = True
+        cv2.imshow(self.window_name, packet.image)
+        key = cv2.waitKey(1) & 0xFF
+        return key != ord("q") and cv2.getWindowProperty(
+            self.window_name, cv2.WND_PROP_VISIBLE
+        ) >= 1
+
+    def close(self):
+        if self._opened:
+            self._opened = False
+            cv2.destroyWindow(self.window_name)
+
+
+def run_live(source, display, *, requested_fps):
+    """Read until the display stops; the caller owns source/display cleanup."""
+
+    if not isfinite(requested_fps) or requested_fps <= 0:
+        raise ValueError("requested_fps must be finite and positive")
+    latencies = deque(maxlen=2048)
+    count = gaps = 0
+    latency_sum = 0.0
+    first_received = last_received = last_sequence = None
+    width = height = None
+
+    while True:
+        packet = source.read()
+        received, captured = packet.host_received_timestamp_s, packet.device_timestamp_s
+        if not all(isfinite(value) for value in (received, captured)):
+            raise ValueError("Frame timestamps must be finite")
+        if last_received is not None and received <= last_received:
+            raise ValueError("Host timestamps must increase")
+        if last_sequence is not None and packet.sequence_number <= last_sequence:
+            raise ValueError("Frame sequence numbers must increase within a run")
+
+        if first_received is None:
+            first_received = received
+            height, width = packet.image.shape[:2]
+        if last_sequence is not None:
+            gaps += packet.sequence_number - last_sequence - 1
+        last_sequence, last_received = packet.sequence_number, received
+        latency = (received - captured) * 1000.0
+        latencies.append(latency)
+        latency_sum += latency
+        count += 1
+
+        if not display.show(packet):
+            break
+
+    duration = last_received - first_received
+    ordered = sorted(latencies)
+    return {
+        "requested_fps": requested_fps,
+        "frames_received": count,
+        "sequence_gaps": gaps,
+        "duration_s": duration,
+        "received_fps": (count - 1) / duration if count > 1 else None,
+        "latency_mean_ms": latency_sum / count,
+        "latency_p95_ms": ordered[ceil(.95 * len(ordered)) - 1],
+        "frame_width": width,
+        "frame_height": height,
+        "latency_p95_sample_count": len(ordered),
+        "latency_p95_window_size": latencies.maxlen,
+        "stop_reason": getattr(display, "stop_reason", "operator_q"),
+    }
