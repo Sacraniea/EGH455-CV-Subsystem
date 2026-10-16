@@ -1,2 +1,3 @@
+# Run with pixi run python src/export_cnn.py (from Target Detection directory)
 from ultralytics import YOLO
-YOLO("models/50_epoch_best.pt").export(format="ncnn", imgsz=640)
+YOLO("models/v4.pt").export(format="ncnn", imgsz=640)
