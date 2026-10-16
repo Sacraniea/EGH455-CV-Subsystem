@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 def initialise_predictor():
-    MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "50_epoch_best_ncnn_model"
+    MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "v4_ncnn_model"
     model_path = Path(
         MODEL_PATH
     ).expanduser().resolve()
