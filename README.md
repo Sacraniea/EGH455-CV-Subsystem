@@ -1,3 +1,8 @@
+Note: if camera is still being held by stale process:
+`error: Local endpoint 127.0.0.1:18883 is already in use or unavailable; check the interface address and port. No existing process was stopped.`
+
+Run: `sudo fuser -k 18883/tcp` to kill it
+
 # EGH455 Computer Vision Subsystem
 
 This subsystem takes frames from the OAK-D Lite camera, detects gauges, valves
@@ -97,3 +102,7 @@ Ctrl+C does not wait for queued photos to finish uploading.
 
 For more detail, see the [stream walkthrough](Camera%20Stream/docs/stream-walkthrough.md)
 or the [GCS integration guide](Camera%20Stream/docs/gcs-integration.md).
+https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainference+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afile_upload+user%3Aplugins&code_challenge=g8NR0DMNNXoPQKMQ1SOmV0InoVa_k2sDvs8DRoC98A8&code_challenge_method=S256&state=0q0zGQ4cbd2FWduFK9B4RBd3vHhZCkPgfGI8dD7j5r8
+
+
+ase9xEYmGB68vxP0CSR4vctCkNMxVbAwRg0V97DhTiUcN84j#0q0zGQ4cbd2FWduFK9B4RBd3vHhZCkPgfGI8dD7j5r8

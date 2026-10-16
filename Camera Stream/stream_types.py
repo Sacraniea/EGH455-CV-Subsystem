@@ -39,6 +39,24 @@ class FramePacket:
 
 # Map each supported profile name to its image size and requested frame rate.
 _STREAM_PROFILES = {
+    "480p15": StreamProfile(
+        name="480p15",
+        width=640,
+        height=480,
+        fps=15.0,
+    ),
+    "480p25": StreamProfile(
+        name="480p25",
+        width=640,
+        height=480,
+        fps=25.0,
+    ),
+    "720p15": StreamProfile(
+        name="720p15",
+        width=1280,
+        height=720,
+        fps=15.0,
+    ),
     "720p30": StreamProfile(
         name="720p30",
         width=1280,
@@ -52,6 +70,10 @@ _STREAM_PROFILES = {
         fps=30.0,
     ),
 }
+
+
+# List the profile names the command-line runners accept.
+STREAM_PROFILE_NAMES = tuple(_STREAM_PROFILES)
 
 
 def get_stream_profile(profile_name: str) -> StreamProfile:

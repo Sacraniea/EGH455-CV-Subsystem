@@ -7,13 +7,13 @@ version = "0.1.0"
 
 [tasks]
 # Run the full subsystem until Ctrl+C. Add the GCS address to publish logs and photos.
-cv-subsystem = { cmd = ["python", "-B", "run_local_demo.py", "--camera", "--targets", "--profile", "720p30", "--max-frames", "0", "--gcs", "auto", "--capture-interval-s", "3", "--calibration", "../ArUco Detection/calibration/oak_cam_a.json", "--calibration-mode", "oak-1080", "--marker-side-length-m", "0.20"], cwd = "Camera Stream", description = "Run until Ctrl+C; add a GCS address to publish logs and photos." }
+cv-subsystem = { cmd = ["python", "-B", "run_local_demo.py", "--camera", "--targets", "--profile", "480p15", "--max-frames", "0", "--gcs", "auto", "--capture-interval-s", "3", "--calibration", "../ArUco Detection/calibration/oak_cam_a.json", "--calibration-mode", "oak-1080", "--marker-side-length-m", "0.20"], cwd = "Camera Stream", description = "Run until Ctrl+C; add a GCS address to publish logs and photos." }
 
 # 10 Second Synthetic test for System Without the Camera
 cv-sys-synthetic-test = { cmd = ["python", "-B", "run_local_demo.py", "--profile", "720p30", "--max-frames", "300", "--gcs", "preview", "--open-browser"], cwd = "Camera Stream", description = "Test the complete local transport with 300 generated marker frames." }
 
 # Check camera capture on its own.
-cv-sys-camera-test = { cmd = ["python", "-B", "run_camera_stream.py", "--headless", "--profile", "720p30", "--max-frames", "90", "--source-timeout-s", "10"], cwd = "Camera Stream", description = "Read 90 camera frames without detection or a preview window." }
+cv-sys-camera-test = { cmd = ["python", "-B", "run_camera_stream.py", "--profile", "720p30", "--max-frames", "0", "--source-timeout-s", "10"], cwd = "Camera Stream", description = "Read 90 camera frames without detection or a preview window." }
 
 # Run Target Detection Locally
 cv-sys-target-detection-test = { cmd = ["python", "-B", "run_camera_stream.py", "--targets", "--profile", "720p30", "--max-frames", "3000", "--source-timeout-s", "10"], cwd = "Camera Stream", description = "Preview target detection and gauge reading for up to 3000 frames." }
@@ -40,6 +40,7 @@ pyyaml = "==6.0.2"
 ultralytics = "==8.4.174"
 torch = { version = "==2.13.0", index = "https://download.pytorch.org/whl/cpu" }
 torchvision = { version = "==0.28.0", index = "https://download.pytorch.org/whl/cpu" }
+ncnn = ">=1.0.20260526, <2"
 
 [target.osx.pypi-dependencies]
 torch = { version = "==2.13.0", index = "https://pypi.org/simple" }

@@ -2,7 +2,7 @@
 
 from dataclasses import asdict, replace
 from enum import Enum
-from hashlib import file_digest
+from hashlib import file_digest, sha256
 from math import isfinite
 from numbers import Real
 from pathlib import Path
@@ -57,17 +57,17 @@ def reading_record(reading):
 def prepare_targets(model_path = None):
     """Load Aidan's local model once and record which settings the stream uses."""
 
-    # Find the weights beside Aidan's source, regardless of the terminal's folder.
-    model_path = Path(
-        model_path or TARGET_DIRECTORY / "models" / "50_epoch_best.pt"
-    ).expanduser().resolve()
+    # # Find the weights beside Aidan's source, regardless of the terminal's folder.
+    # model_path = Path(
+    #     model_path or TARGET_DIRECTORY / "models" / "50_epoch_best.pt"
+    # ).expanduser().resolve()
 
-    if not model_path.is_file():
-        raise FileNotFoundError(f"Target model file does not exist: {model_path}")
+    # if not model_path.is_file():
+    #     raise FileNotFoundError(f"Target model file does not exist: {model_path}")
 
     # Camera-only and ArUco runs do not need to import the model dependencies.
     try:
-        from predict import Predictor
+        from predict import initialise_predictor
 
     except ImportError as error:
         raise RuntimeError(
@@ -77,7 +77,12 @@ def prepare_targets(model_path = None):
         ) from error
 
     # Reuse this predictor for every frame instead of loading weights repeatedly.
-    predictor = Predictor(str(model_path))
+    # initialise_predictor() loads the same NCNN folder named here for the metadata.
+    model_path = Path(
+        TARGET_DIRECTORY / "models" / "50_epoch_best_ncnn_model"
+    ).expanduser().resolve()
+
+    predictor = initialise_predictor()
 
     # Aidan uses the dataset's label order. Reject weights that give those IDs
     # different meanings, so a valve cannot accidentally be passed to the reader.
@@ -89,9 +94,18 @@ def prepare_targets(model_path = None):
 
     processor = TargetDetectionProcessor(predictor = predictor)
 
-    # Save the file fingerprint so later runs can identify the exact model used.
-    with model_path.open("rb") as model_file:
-        model_sha256 = file_digest(model_file, "sha256").hexdigest()
+    # Save the model fingerprint so later runs can identify the exact model used.
+    # NCNN exports are a folder, so hash every file in it in a fixed order.
+    model_files = (
+        sorted(path for path in model_path.rglob("*") if path.is_file())
+        if model_path.is_dir() else [model_path]
+    )
+    model_hash = sha256()
+    for path in model_files:
+        model_hash.update(str(path.relative_to(model_path.parent)).encode())
+        with path.open("rb") as model_file:
+            model_hash.update(file_digest(model_file, "sha256").digest())
+    model_sha256 = model_hash.hexdigest()
 
     metadata = {
         "model_path": str(model_path),
