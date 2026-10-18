@@ -41,6 +41,12 @@ class FramePacket:
 
 # Map each supported profile name to its image size and requested frame rate.
 _STREAM_PROFILES = {
+    "480p10": StreamProfile(
+        name="480p10",
+        width=640,
+        height=480,
+        fps=10.0,
+    ),
     "480p20": StreamProfile(
         name="480p20",
         width=640,
