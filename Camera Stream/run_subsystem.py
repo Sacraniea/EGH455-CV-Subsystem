@@ -247,7 +247,7 @@ def main(argv = None):
 
                     # Give the receiver time to consume the final finite-run frames.
                     try:
-                        receiver_status = receiver.wait(timeout = 2)
+                        receiver_status = receiver.wait(timeout = 5)
 
                     except subprocess.TimeoutExpired:
                         return 0
